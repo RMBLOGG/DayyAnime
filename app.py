@@ -1,5 +1,4 @@
-[file name]: app.py
-[file content begin]
+
 # app.py - Production Ready for Railway dengan 100 Page Support
 import os
 from flask import Flask, render_template, request, jsonify
@@ -639,4 +638,3 @@ if __name__ == '__main__':
         debug=os.environ.get('DEBUG', 'False').lower() == 'true',
         threaded=True
     )
-[file content end]
