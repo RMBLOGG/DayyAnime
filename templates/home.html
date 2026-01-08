@@ -3,25 +3,66 @@
 {% block title %}Latest Anime - AnimeStream{% endblock %}
 
 {% block content %}
-<h2 class="page-title">📺 Latest Anime</h2>
+<div style="margin-bottom: 2rem;">
+    <h2 class="page-title" style="margin-bottom: 0.3rem;">📺 Latest Anime</h2>
+    <p style="color: rgba(255, 255, 255, 0.6); font-size: 0.95rem;">
+        Newest releases updated daily
+    </p>
+</div>
 
 {% if data %}
 <div class="anime-grid">
     {% for anime in data %}
-    <a href="/anime/{{ anime.url }}" style="text-decoration: none; color: inherit;">
-        <div class="anime-card">
-            {% if anime.lastch %}
-            <span class="badge">{{ anime.lastch }}</span>
-            {% elif anime.lastup %}
-            <span class="badge">{{ anime.lastup }}</span>
-            {% endif %}
-            <img src="{{ anime.cover }}" alt="{{ anime.judul }}" onerror="this.src='https://via.placeholder.com/180x260?text=No+Image'">
-            <div class="anime-card-info">
-                <h3>{{ anime.judul }}</h3>
-                <div class="meta">
-                    <span>⭐ {{ anime.score if anime.score and anime.score != 'N/A' else 'N/A' }}</span>
+    <a href="/anime/{{ anime.url }}" style="text-decoration: none; color: inherit; display: block;">
+        <div class="anime-card" 
+             style="background: rgba(26, 26, 46, 0.8); border-radius: 12px; overflow: hidden; transition: all 0.3s ease; position: relative; border: 1px solid rgba(255, 107, 107, 0.1); backdrop-filter: blur(10px);"
+             onmouseover="this.style.transform='translateY(-5px)'; this.style.boxShadow='0 10px 25px rgba(255, 107, 107, 0.15)'; this.style.borderColor='rgba(255, 107, 107, 0.3)'"
+             onmouseout="this.style.transform='translateY(0)'; this.style.boxShadow='none'; this.style.borderColor='rgba(255, 107, 107, 0.1)'">
+            
+            <!-- Image Container -->
+            <div style="position: relative; height: 260px; overflow: hidden;">
+                <img src="{{ anime.cover }}" 
+                     alt="{{ anime.judul }}" 
+                     onerror="this.src='https://via.placeholder.com/180x260?text=No+Image'"
+                     style="width: 100%; height: 100%; object-fit: cover; display: block;">
+                
+                <!-- Overlay Gradient -->
+                <div style="position: absolute; bottom: 0; left: 0; right: 0; height: 40%; background: linear-gradient(to top, rgba(0,0,0,0.8), transparent);"></div>
+                
+                <!-- Badge -->
+                {% if anime.lastch %}
+                <div style="position: absolute; top: 12px; right: 12px;">
+                    <span style="background: linear-gradient(135deg, #ff6b6b, #ff5252); color: white; padding: 0.4rem 0.8rem; border-radius: 20px; font-size: 0.75rem; font-weight: 600; display: block; box-shadow: 0 4px 10px rgba(255, 107, 107, 0.3);">
+                        {{ anime.lastch }}
+                    </span>
+                </div>
+                {% elif anime.lastup %}
+                <div style="position: absolute; top: 12px; right: 12px;">
+                    <span style="background: linear-gradient(135deg, #6495ed, #4169e1); color: white; padding: 0.4rem 0.8rem; border-radius: 20px; font-size: 0.75rem; font-weight: 600; display: block; box-shadow: 0 4px 10px rgba(100, 149, 237, 0.3);">
+                        {{ anime.lastup }}
+                    </span>
+                </div>
+                {% endif %}
+            </div>
+            
+            <!-- Anime Info -->
+            <div class="anime-card-info" style="padding: 1.2rem;">
+                <h3 style="font-size: 0.95rem; margin-bottom: 0.8rem; height: 2.8em; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; line-height: 1.4; color: rgba(255, 255, 255, 0.95);">
+                    {{ anime.judul }}
+                </h3>
+                
+                <div class="meta" style="display: flex; justify-content: space-between; align-items: center; margin-top: 0.8rem; padding-top: 0.8rem; border-top: 1px solid rgba(255, 255, 255, 0.1);">
+                    <div style="display: flex; align-items: center; gap: 0.4rem;">
+                        <span style="color: #FFD700;">⭐</span>
+                        <span style="color: rgba(255, 255, 255, 0.9); font-weight: 500;">
+                            {{ anime.score if anime.score and anime.score != 'N/A' else 'N/A' }}
+                        </span>
+                    </div>
+                    
                     {% if anime.status %}
-                    <span>{{ anime.status }}</span>
+                    <span style="font-size: 0.8rem; padding: 0.2rem 0.5rem; border-radius: 4px; background: {% if anime.status == 'Ongoing' %}rgba(76, 175, 80, 0.1){% elif anime.status == 'Completed' %}rgba(100, 149, 237, 0.1){% else %}rgba(153, 153, 153, 0.1){% endif %}; color: {% if anime.status == 'Ongoing' %}#4CAF50{% elif anime.status == 'Completed' %}#6495ed{% else %}#999{% endif %}; font-weight: 500;">
+                        {{ anime.status }}
+                    </span>
                     {% endif %}
                 </div>
             </div>
@@ -31,18 +72,88 @@
 </div>
 
 <!-- Navigasi halaman -->
-<div class="pagination">
+<div class="pagination" style="margin-top: 3rem;">
     {% if current_page > 1 %}
-        <a href="/?page={{ current_page-1 }}" class="page-link">← Prev</a>
+        <a href="/?page={{ current_page-1 }}" 
+           class="page-link"
+           style="padding: 0.7rem 1.5rem; background: rgba(26, 26, 46, 0.8); border-radius: 8px; text-decoration: none; color: #fff; border: 1px solid rgba(255, 107, 107, 0.2); transition: all 0.3s ease; font-weight: 500;"
+           onmouseover="this.style.background='rgba(255, 107, 107, 0.2)'; this.style.borderColor='#ff6b6b'"
+           onmouseout="this.style.background='rgba(26, 26, 46, 0.8)'; this.style.borderColor='rgba(255, 107, 107, 0.2)'">
+            ← Prev
+        </a>
     {% endif %}
     
-    <span class="page-info">Page {{ current_page }}</span>
+    <span class="page-info" 
+          style="padding: 0.7rem 1.5rem; background: rgba(26, 26, 46, 0.8); border-radius: 8px; color: rgba(255, 255, 255, 0.8); border: 1px solid rgba(255, 107, 107, 0.2); font-weight: 500;">
+        Page <span style="color: #ff6b6b; font-weight: 600;">{{ current_page }}</span>
+    </span>
     
     {% if has_next_page and current_page < max_pages %}
-        <a href="/?page={{ current_page+1 }}" class="page-link">Next →</a>
+        <a href="/?page={{ current_page+1 }}" 
+           class="page-link"
+           style="padding: 0.7rem 1.5rem; background: rgba(26, 26, 46, 0.8); border-radius: 8px; text-decoration: none; color: #fff; border: 1px solid rgba(255, 107, 107, 0.2); transition: all 0.3s ease; font-weight: 500;"
+           onmouseover="this.style.background='rgba(255, 107, 107, 0.2)'; this.style.borderColor='#ff6b6b'"
+           onmouseout="this.style.background='rgba(26, 26, 46, 0.8)'; this.style.borderColor='rgba(255, 107, 107, 0.2)'">
+            Next →
+        </a>
     {% endif %}
 </div>
 {% else %}
-<p style="text-align: center; margin: 3rem 0; font-size: 1.2rem; color: #999;">Tidak ada anime tersedia</p>
+<!-- No Anime Available -->
+<div style="text-align: center; padding: 3rem 1rem; margin: 2rem 0;">
+    <div style="font-size: 4rem; margin-bottom: 1rem; color: rgba(255, 107, 107, 0.2);">
+        📺
+    </div>
+    <p style="font-size: 1.2rem; color: #999; margin-bottom: 1rem;">
+        Tidak ada anime tersedia
+    </p>
+    <p style="color: rgba(255, 255, 255, 0.5); font-size: 0.9rem; max-width: 400px; margin: 0 auto;">
+        Try refreshing the page or check back later for new updates.
+    </p>
+</div>
 {% endif %}
+
+<style>
+/* Ensure anime grid works properly */
+.anime-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+    gap: 1.5rem;
+    margin: 2rem 0;
+}
+
+/* Pagination styling */
+.pagination {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    gap: 1rem;
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+    .anime-grid {
+        grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+        gap: 1rem;
+    }
+    
+    .anime-card > div:first-child {
+        height: 220px;
+    }
+}
+
+@media (max-width: 480px) {
+    .anime-grid {
+        grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
+    }
+    
+    .anime-card > div:first-child {
+        height: 200px;
+    }
+    
+    .anime-card-info {
+        padding: 0.8rem;
+    }
+}
+</style>
 {% endblock %}
