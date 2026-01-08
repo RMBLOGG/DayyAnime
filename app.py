@@ -588,22 +588,24 @@ def internal_server_error(e):
                          error_message="Terjadi kesalahan internal server",
                          suggestion="Coba refresh halaman atau kembali nanti"), 500
 
-# Startup cache loading
-@app.before_first_request
-def startup_tasks():
-    """Load cache saat startup di background thread"""
+# ==================== STARTUP CACHE LOADING ====================
+
+def load_startup_cache():
+    """Load cache saat aplikasi dimulai"""
+    log_info("Starting background cache loading at startup...")
     def load_cache_background():
-        log_info("Starting background cache loading...")
+        log_info("Loading anime cache in background...")
         load_all_anime()
     
     thread = threading.Thread(target=load_cache_background, daemon=True)
     thread.start()
-    log_info("Background cache loading started")
+
+# Panggil fungsi load cache saat startup
+load_startup_cache()
+
+# ==================== MAIN EXECUTION ====================
 
 if __name__ == '__main__':
-    # Load cache in background saat startup
-    startup_tasks()
-    
     # Dapatkan port dari environment variable (Railway menyediakan PORT)
     port = int(os.environ.get('PORT', 5000))
     
