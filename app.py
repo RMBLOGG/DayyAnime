@@ -16,8 +16,8 @@ API_BASE = os.environ.get('API_BASE', 'https://api.sansekai.my.id/api')
 MAX_PAGES = int(os.environ.get('MAX_PAGES', 100))  # 100 PAGES untuk semua endpoint
 MAX_RETRIES = int(os.environ.get('MAX_RETRIES', 3))
 RETRY_DELAY = float(os.environ.get('RETRY_DELAY', 2.0))
-REQUEST_DELAY = float(os.environ.get('REQUEST_DELAY', 0.3))  # Dikurangi untuk lebih cepat
-CACHE_MAX_PAGES = int(os.environ.get('CACHE_MAX_PAGES', 50))  # Cache 50 pages untuk performance
+REQUEST_DELAY = float(os.environ.get('REQUEST_DELAY', 0.3))
+CACHE_MAX_PAGES = int(os.environ.get('CACHE_MAX_PAGES', 50))
 
 # Cache untuk menyimpan semua anime
 anime_cache = []
@@ -81,6 +81,19 @@ def safe_api_request(url, retry_count=0):
     except Exception:
         return None
 
+def debug_response(endpoint, data):
+    """Print response untuk debugging"""
+    print(f"\n{'='*50}")
+    print(f"Endpoint: {endpoint}")
+    print(f"Response Type: {type(data)}")
+    if isinstance(data, list) and len(data) > 0:
+        print(f"First item keys: {data[0].keys() if isinstance(data[0], dict) else 'Not a dict'}")
+        print(f"First item sample: {json.dumps(data[0], indent=2)[:500]}")
+    elif isinstance(data, dict):
+        print(f"Keys: {data.keys()}")
+        print(f"Sample: {json.dumps(data, indent=2)[:500]}")
+    print(f"{'='*50}\n")
+
 def load_all_anime():
     """Load semua anime dari API dan simpan di cache"""
     global anime_cache, cache_loaded, cache_loading
@@ -137,10 +150,51 @@ def load_all_anime():
     log_success(f"Cache loaded: {len(anime_cache)} anime")
     return anime_cache
 
+def load_minimal_cache_fallback():
+    """Load minimal cache sebagai fallback"""
+    global anime_cache, cache_loaded
+    
+    log_info("Loading minimal fallback cache...")
+    
+    all_anime = []
+    # Coba load 5 halaman pertama dari latest saja
+    for page in range(1, 6):
+        try:
+            url = f"{API_BASE}/anime/latest?page={page}"
+            response = safe_api_request(url)
+            if response:
+                data = response.json()
+                if isinstance(data, list) and len(data) > 0:
+                    all_anime.extend(data)
+                    log_info(f"Fallback: Loaded page {page} ({len(data)} anime)")
+                    time.sleep(1)
+        except:
+            break
+    
+    if all_anime:
+        # Remove duplicates
+        seen = set()
+        unique_anime = []
+        for anime in all_anime:
+            identifier = f"{anime.get('url', '')}|{anime.get('id', '')}"
+            if identifier not in seen:
+                seen.add(identifier)
+                unique_anime.append(anime)
+        
+        anime_cache = unique_anime
+    else:
+        # Jika masih gagal, buat cache kosong
+        anime_cache = []
+    
+    cache_loaded = True
+    log_info(f"Fallback cache: {len(anime_cache)} anime loaded")
+    return anime_cache
+
 def find_anime_by_slug(slug):
     """Cari anime berdasarkan slug atau ID dari cache"""
     all_anime = load_all_anime()
     
+    # Normalize slug
     slug_normalized = slug.strip('/').lower()
     
     # Try 1: Exact URL match
@@ -152,7 +206,28 @@ def find_anime_by_slug(slug):
     # Try 2: Partial URL match
     for anime in all_anime:
         anime_url = anime.get('url', '').strip('/').lower()
+        anime_title = anime.get('judul', '').lower()
+        
+        # Check if slug is part of URL or title
         if slug_normalized in anime_url or anime_url in slug_normalized:
+            return anime
+        
+        # Try matching with title
+        title_slug = anime_title.replace(' ', '-').replace(':', '').lower()
+        if title_slug == slug_normalized or slug_normalized in title_slug:
+            return anime
+    
+    # Try 3: Check if slug is actually an ID
+    for anime in all_anime:
+        anime_id = str(anime.get('id', ''))
+        if anime_id == slug_normalized:
+            return anime
+    
+    # Try 4: Fuzzy match on title
+    slug_parts = slug_normalized.replace('-', ' ').split()
+    for anime in all_anime:
+        anime_title_lower = anime.get('judul', '').lower()
+        if all(part in anime_title_lower for part in slug_parts if len(part) > 2):
             return anime
     
     return None
@@ -170,6 +245,9 @@ def get_episode_video(anime_data, episode_num):
             f"al-{anime_id}-{str(episode_num).zfill(3)}",
             f"{anime_url}-episode-{episode_num}",
             f"{anime_url}-ep-{episode_num}",
+            f"{anime_url}/episode-{episode_num}",
+            f"{anime_url}/{episode_num}",
+            f"{anime_id}-{episode_num}",
         ]
         
         for chapter_id in possible_chapter_ids:
@@ -191,7 +269,8 @@ def get_episode_video(anime_data, episode_num):
         
         return None
             
-    except Exception:
+    except Exception as e:
+        log_error(f"Error getting episode video: {e}")
         return None
 
 def check_next_page(endpoint, page, genre_name=None):
@@ -246,7 +325,8 @@ def home():
                              has_prev_page=has_prev_page,
                              max_pages=MAX_PAGES,
                              endpoint_name='Latest Anime')
-    except Exception:
+    except Exception as e:
+        log_error(f"Error in home route: {e}")
         return render_template('home.html', 
                              data=[], 
                              current_page=page,
@@ -272,7 +352,8 @@ def ongoing():
                              has_prev_page=has_prev_page,
                              max_pages=MAX_PAGES,
                              endpoint_name='Ongoing Anime')
-    except Exception:
+    except Exception as e:
+        log_error(f"Error in ongoing route: {e}")
         return render_template('ongoing.html', 
                              data=[], 
                              current_page=page,
@@ -298,7 +379,8 @@ def completed():
                              has_prev_page=has_prev_page,
                              max_pages=MAX_PAGES,
                              endpoint_name='Completed Anime')
-    except Exception:
+    except Exception as e:
+        log_error(f"Error in completed route: {e}")
         return render_template('completed.html', 
                              data=[], 
                              current_page=page,
@@ -323,11 +405,14 @@ def movie():
                              has_next_page=has_next_page,
                              has_prev_page=has_prev_page,
                              max_pages=MAX_PAGES,
-                             endpoint_name='Movie Anime')
-    except Exception:
+                             endpoint_name='Movie Anime',
+                             error=None)
+    except Exception as e:
+        log_error(f"Error in movie route: {e}")
         return render_template('movie.html', 
                              data=[], 
-                             current_page=page,
+                             current_page=page, 
+                             error="Failed to load data",
                              max_pages=MAX_PAGES)
 
 @app.route('/search')
@@ -367,6 +452,15 @@ def search():
                     results = first_element['result'] if isinstance(first_element['result'], list) else []
                 else:
                     results = inner_data
+            elif isinstance(inner_data, dict) and 'result' in inner_data:
+                results = inner_data['result'] if isinstance(inner_data['result'], list) else []
+        
+        elif isinstance(data, list):
+            results = data
+        elif isinstance(data, dict) and 'result' in data:
+            results = data['result'] if isinstance(data['result'], list) else []
+        elif isinstance(data, dict) and 'results' in data:
+            results = data['results'] if isinstance(data['results'], list) else []
         
         # Manual pagination
         items_per_page = 20
@@ -386,7 +480,8 @@ def search():
                              max_pages=MAX_PAGES,
                              total_results=len(results))
         
-    except Exception:
+    except Exception as e:
+        log_error(f"Error in search route: {e}")
         return render_template('search.html', 
                              query=query, 
                              data=[],
@@ -418,7 +513,8 @@ def anime_detail(slug):
                              error_message=f"Anime '{slug}' tidak ditemukan",
                              suggestion="Coba cari anime di halaman search")
         
-    except Exception:
+    except Exception as e:
+        log_error(f"Error in anime_detail route: {e}")
         return render_template('error.html', 
                              error_message="Terjadi kesalahan saat memuat anime",
                              suggestion="Coba lagi nanti atau gunakan fitur search")
@@ -426,43 +522,59 @@ def anime_detail(slug):
 @app.route('/watch/<path:slug>')
 def watch(slug):
     try:
-        # Parse episode
-        if 'episode-' in slug:
-            parts = slug.split('episode-')
-            anime_slug = parts[0].rstrip('-/')
-            episode_num = parts[1].rstrip('/')
-        elif 'ep-' in slug:
-            parts = slug.split('ep-')
-            anime_slug = parts[0].rstrip('-/')
-            episode_num = parts[1].rstrip('/')
-        else:
-            return render_template('error.html',
-                                 error_message="Format URL tidak valid",
-                                 suggestion="Gunakan format: /watch/anime-slug/episode-N")
+        # Parse anime slug dan episode number
+        parts = slug.rstrip('/').split('/')
         
+        episode_num = ''
+        anime_slug = ''
+        
+        if len(parts) >= 2:
+            anime_slug = '/'.join(parts[:-1]) + '/'
+            episode_part = parts[-1]
+            if 'episode-' in episode_part:
+                episode_num = episode_part.replace('episode-', '')
+            elif 'ep-' in episode_part:
+                episode_num = episode_part.replace('ep-', '')
+        else:
+            if 'episode-' in slug:
+                split_ep = slug.rsplit('episode-', 1)
+                anime_slug = split_ep[0].rstrip('-') + '/'
+                episode_num = split_ep[1].rstrip('/')
+            elif 'ep-' in slug:
+                split_ep = slug.rsplit('ep-', 1)
+                anime_slug = split_ep[0].rstrip('-') + '/'
+                episode_num = split_ep[1].rstrip('/')
+            else:
+                anime_slug = slug
+        
+        # Cari anime data dari cache
         anime_data = find_anime_by_slug(anime_slug)
         
         if not anime_data:
             return render_template('error.html',
                                  error_message=f"Anime tidak ditemukan: {anime_slug}",
-                                 suggestion="Kembali ke halaman utama")
+                                 suggestion="Kembali ke halaman utama dan cari anime")
         
-        # Get video
+        anime_title = anime_data.get('judul', 'Unknown')
+        
+        # Get video data dari API
         video_data = get_episode_video(anime_data, episode_num)
         
+        # Buat episode data
         episode_data = {
-            'title': f"{anime_data.get('judul', 'Unknown')} - Episode {episode_num}",
+            'title': f'{anime_title} - Episode {episode_num}',
             'anime_url': anime_slug,
-            'anime_title': anime_data.get('judul', 'Unknown'),
+            'anime_title': anime_title,
             'episode': episode_num,
             'video_data': video_data,
-            'prev_episode': int(episode_num) - 1 if episode_num.isdigit() and int(episode_num) > 1 else None,
-            'next_episode': int(episode_num) + 1 if episode_num.isdigit() else None,
+            'prev_episode': int(episode_num) - 1 if episode_num and episode_num.isdigit() and int(episode_num) > 1 else None,
+            'next_episode': int(episode_num) + 1 if episode_num and episode_num.isdigit() else None,
         }
         
         return render_template('watch.html', episode=episode_data)
         
-    except Exception:
+    except Exception as e:
+        log_error(f"Error in watch route: {e}")
         return render_template('error.html',
                              error_message="Terjadi kesalahan saat memuat video",
                              suggestion="Coba lagi nanti atau pilih episode lain")
@@ -489,7 +601,8 @@ def genre(genre_name):
                              has_next_page=has_next_page,
                              has_prev_page=has_prev_page,
                              max_pages=MAX_PAGES)
-    except Exception:
+    except Exception as e:
+        log_error(f"Error in genre route: {e}")
         return render_template('genre.html', 
                              data=[], 
                              genre_name=genre_name, 
@@ -531,7 +644,64 @@ def cache_info():
             'cache_max_pages': CACHE_MAX_PAGES,
             'api_base': API_BASE,
             'last_updated': datetime.now().isoformat()
+        },
+        'sample_data': {
+            'sample_count': min(5, len(anime_cache)),
+            'samples': [
+                {
+                    'id': anime.get('id'),
+                    'title': anime.get('judul'),
+                    'url': anime.get('url'),
+                    'type': anime.get('type'),
+                    'episodes': anime.get('total_episode')
+                }
+                for anime in anime_cache[:5]
+            ] if anime_cache else []
         }
+    })
+
+@app.route('/api/test')
+def api_test():
+    """Test API endpoints"""
+    test_results = {}
+    
+    endpoints = [
+        ('latest', f"{API_BASE}/anime/latest?page=1"),
+        ('ongoing', f"{API_BASE}/anime/ongoing?page=1"),
+        ('completed', f"{API_BASE}/anime/completed?page=1"),
+        ('movie', f"{API_BASE}/anime/movie?page=1"),
+        ('search', f"{API_BASE}/anime/search?query=naruto"),
+    ]
+    
+    for name, url in endpoints:
+        try:
+            response = safe_api_request(url)
+            if response:
+                test_results[name] = {
+                    'status': 'available',
+                    'status_code': response.status_code,
+                    'url': url
+                }
+            else:
+                test_results[name] = {
+                    'status': 'unavailable',
+                    'url': url
+                }
+        except Exception as e:
+            test_results[name] = {
+                'status': 'error',
+                'error': str(e),
+                'url': url
+            }
+    
+    return jsonify({
+        'api_test': test_results,
+        'cache_info': {
+            'loaded': cache_loaded,
+            'size': len(anime_cache),
+            'max_pages': MAX_PAGES
+        },
+        'server_time': datetime.now().isoformat()
     })
 
 @app.route('/health')
@@ -570,7 +740,8 @@ def stats():
             'watch': '/watch/slug/episode-N',
             'genre': '/genre/genre-name',
             'cache_info': '/cache/info',
-            'health': '/health'
+            'health': '/health',
+            'api_test': '/api/test'
         }
     }
     
@@ -626,6 +797,7 @@ if __name__ == '__main__':
     print("   Search:      http://localhost:5000/search?q=query")
     print("   Health:      http://localhost:5000/health")
     print("   Cache Info:  http://localhost:5000/cache/info")
+    print("   API Test:    http://localhost:5000/api/test")
     print("   Stats:       http://localhost:5000/stats")
     print("=" * 60)
     
