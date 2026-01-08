@@ -1,4 +1,4 @@
-# app.py - Production Ready dengan GUARANTEED 100 PAGE LOADING
+# app.py - Production Ready for Railway dengan 100 Page Support
 import os
 from flask import Flask, render_template, request, jsonify
 import requests
@@ -7,7 +7,6 @@ import json
 import time
 from datetime import datetime
 import threading
-from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # Inisialisasi Flask app
 app = Flask(__name__)
@@ -15,26 +14,15 @@ app = Flask(__name__)
 # Configuration dari environment variables
 API_BASE = os.environ.get('API_BASE', 'https://api.sansekai.my.id/api')
 MAX_PAGES = int(os.environ.get('MAX_PAGES', 100))  # 100 PAGES untuk semua endpoint
-MAX_RETRIES = int(os.environ.get('MAX_RETRIES', 5))  # Increased retries
-RETRY_DELAY = float(os.environ.get('RETRY_DELAY', 1.0))
-REQUEST_DELAY = float(os.environ.get('REQUEST_DELAY', 0.1))  # Reduced for speed
-CACHE_MAX_PAGES = int(os.environ.get('CACHE_MAX_PAGES', 100))  # HARUS 100
-
-# Performance tracking
-startup_time = datetime.now()
-total_api_calls = 0
-failed_api_calls = 0
+MAX_RETRIES = int(os.environ.get('MAX_RETRIES', 3))
+RETRY_DELAY = float(os.environ.get('RETRY_DELAY', 2.0))
+REQUEST_DELAY = float(os.environ.get('REQUEST_DELAY', 0.3))  # Dikurangi untuk lebih cepat
+CACHE_MAX_PAGES = int(os.environ.get('CACHE_MAX_PAGES', 50))  # Cache 50 pages untuk performance
 
 # Cache untuk menyimpan semua anime
 anime_cache = []
 cache_loaded = False
 cache_loading = False
-cache_metadata = {
-    'total_pages_loaded': 0,
-    'total_anime_loaded': 0,
-    'last_updated': None,
-    'load_duration': 0
-}
 
 # Helper function untuk logging
 def log_info(message):
@@ -57,27 +45,16 @@ def log_success(message):
     timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     print(f"[{timestamp}] ✅ {message}")
 
-def log_performance(message):
-    """Log performance dengan timestamp"""
-    timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-    print(f"[{timestamp}] ⚡ {message}")
-
 def safe_api_request(url, retry_count=0):
     """Fungsi aman untuk request API dengan retry mechanism"""
-    global total_api_calls, failed_api_calls
-    
-    total_api_calls += 1
-    
     try:
         headers = {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
             'Accept': 'application/json',
             'Accept-Language': 'en-US,en;q=0.9',
-            'Cache-Control': 'no-cache',
-            'Pragma': 'no-cache'
         }
         
-        response = requests.get(url, headers=headers, timeout=15)
+        response = requests.get(url, headers=headers, timeout=10)
         
         # Handle rate limiting (429)
         if response.status_code == 429:
@@ -86,21 +63,10 @@ def safe_api_request(url, retry_count=0):
                 log_warning(f"Rate limited (429). Waiting {wait_time}s...")
                 time.sleep(wait_time)
                 return safe_api_request(url, retry_count + 1)
-            failed_api_calls += 1
             return None
-        
-        # Handle 404 - Page not found
-        if response.status_code == 404:
-            log_warning(f"Page not found (404): {url}")
-            return {'status': 'empty', 'data': []}
         
         # Handle other status codes
         if response.status_code != 200:
-            log_warning(f"API request returned status {response.status_code}: {url}")
-            if retry_count < MAX_RETRIES:
-                time.sleep(RETRY_DELAY)
-                return safe_api_request(url, retry_count + 1)
-            failed_api_calls += 1
             return None
         
         return response
@@ -110,289 +76,65 @@ def safe_api_request(url, retry_count=0):
             wait_time = RETRY_DELAY * (retry_count + 1)
             time.sleep(wait_time)
             return safe_api_request(url, retry_count + 1)
-        failed_api_calls += 1
         return None
             
-    except Exception as e:
-        log_error(f"Error in API request: {e}")
-        if retry_count < MAX_RETRIES:
-            time.sleep(RETRY_DELAY)
-            return safe_api_request(url, retry_count + 1)
-        failed_api_calls += 1
+    except Exception:
         return None
-
-def load_single_page(page_num):
-    """Load single page dengan retry mechanism"""
-    url = f"{API_BASE}/anime/latest?page={page_num}"
-    max_attempts = 3
-    
-    for attempt in range(max_attempts):
-        try:
-            if attempt > 0:
-                log_warning(f"Retry {attempt} for page {page_num}")
-                time.sleep(attempt * 0.5)  # Exponential backoff
-            
-            response = safe_api_request(url)
-            
-            if response:
-                if isinstance(response, dict) and response.get('status') == 'empty':
-                    return {'page': page_num, 'data': [], 'status': 'empty'}
-                
-                data = response.json()
-                if isinstance(data, list):
-                    return {'page': page_num, 'data': data, 'status': 'success'}
-                else:
-                    log_warning(f"Page {page_num}: Response is not a list")
-                    return {'page': page_num, 'data': [], 'status': 'invalid_format'}
-            else:
-                log_warning(f"Page {page_num}: No response on attempt {attempt + 1}")
-                
-        except Exception as e:
-            log_error(f"Page {page_num}: Error on attempt {attempt + 1} - {str(e)[:50]}")
-    
-    return {'page': page_num, 'data': [], 'status': 'failed'}
-
-def load_100_pages_parallel():
-    """Load 100 pages secara parallel untuk kecepatan maksimum"""
-    log_info("🚀 STARTING PARALLEL 100 PAGE LOAD...")
-    
-    all_anime = []
-    start_time = time.time()
-    successful_pages = 0
-    empty_pages = 0
-    failed_pages = 0
-    
-    # Gunakan ThreadPoolExecutor untuk parallel loading
-    with ThreadPoolExecutor(max_workers=10) as executor:
-        # Submit semua 100 pages
-        future_to_page = {executor.submit(load_single_page, page): page for page in range(1, 101)}
-        
-        # Process results as they complete
-        for future in as_completed(future_to_page):
-            page_num = future_to_page[future]
-            try:
-                result = future.result(timeout=20)
-                
-                if result['status'] == 'success' and len(result['data']) > 0:
-                    all_anime.extend(result['data'])
-                    successful_pages += 1
-                    log_success(f"Page {page_num:3d}: {len(result['data'])} anime")
-                elif result['status'] == 'empty':
-                    empty_pages += 1
-                    log_warning(f"Page {page_num:3d}: Empty page")
-                else:
-                    failed_pages += 1
-                    log_error(f"Page {page_num:3d}: Failed to load")
-                    
-            except Exception as e:
-                failed_pages += 1
-                log_error(f"Page {page_num:3d}: Exception - {str(e)[:50]}")
-    
-    load_duration = time.time() - start_time
-    
-    log_info(f"\n{'='*60}")
-    log_info("📊 PARALLEL LOAD SUMMARY")
-    log_info(f"{'='*60}")
-    log_success(f"Successful pages: {successful_pages}/100")
-    log_warning(f"Empty pages: {empty_pages}/100")
-    log_error(f"Failed pages: {failed_pages}/100")
-    log_success(f"Total anime loaded: {len(all_anime)}")
-    log_performance(f"Load duration: {load_duration:.2f} seconds")
-    log_performance(f"Speed: {load_duration/100:.2f} seconds/page")
-    log_info(f"{'='*60}")
-    
-    return all_anime, successful_pages, load_duration
-
-def load_100_pages_sequential():
-    """Load 100 pages secara sequential dengan agressive retry"""
-    log_info("🚀 STARTING SEQUENTIAL 100 PAGE LOAD (AGGRESSIVE MODE)...")
-    
-    all_anime = []
-    start_time = time.time()
-    successful_pages = 0
-    
-    # Load dari multiple endpoints untuk redundancy
-    endpoint_configs = [
-        ('latest', 100),  # Primary: 100 pages dari latest
-    ]
-    
-    for endpoint_name, target_pages in endpoint_configs:
-        log_info(f"\n📥 Loading from {endpoint_name.upper()} ({target_pages} pages)...")
-        
-        pages_loaded = 0
-        for page in range(1, target_pages + 1):
-            max_attempts = 5  # Increased attempts
-            
-            for attempt in range(max_attempts):
-                try:
-                    if attempt > 0:
-                        delay = attempt * 0.5
-                        log_warning(f"  Page {page:3d}: Retry {attempt}/{max_attempts} (waiting {delay}s)")
-                        time.sleep(delay)
-                    
-                    url = f"{API_BASE}/anime/{endpoint_name}?page={page}"
-                    response = safe_api_request(url)
-                    
-                    if response:
-                        if isinstance(response, dict) and response.get('status') == 'empty':
-                            # Simpan empty page sebagai placeholder
-                            all_anime.append({'__page': page, '__endpoint': endpoint_name, '__empty': True})
-                            pages_loaded += 1
-                            log_warning(f"  Page {page:3d}: Empty (placeholder added)")
-                            break
-                        
-                        data = response.json()
-                        if isinstance(data, list) and len(data) > 0:
-                            # Tambahkan metadata ke setiap anime
-                            for anime in data:
-                                anime['__page'] = page
-                                anime['__endpoint'] = endpoint_name
-                                anime['__timestamp'] = datetime.now().isoformat()
-                            
-                            all_anime.extend(data)
-                            pages_loaded += 1
-                            successful_pages += 1
-                            log_success(f"  Page {page:3d}: {len(data)} anime")
-                            break
-                        else:
-                            log_warning(f"  Page {page:3d}: Empty or invalid list")
-                            # Tambahkan placeholder untuk tracking
-                            all_anime.append({'__page': page, '__endpoint': endpoint_name, '__empty': True})
-                            pages_loaded += 1
-                            break
-                    else:
-                        log_warning(f"  Page {page:3d}: No response on attempt {attempt + 1}")
-                        
-                except Exception as e:
-                    log_error(f"  Page {page:3d}: Error on attempt {attempt + 1} - {str(e)[:50]}")
-            
-            # Small delay between pages untuk menghindari rate limiting
-            if page < target_pages:
-                time.sleep(REQUEST_DELAY)
-        
-        log_success(f"  ✅ {endpoint_name}: {pages_loaded}/{target_pages} pages loaded")
-    
-    # Remove placeholder entries
-    filtered_anime = [anime for anime in all_anime if not anime.get('__empty', False)]
-    
-    load_duration = time.time() - start_time
-    
-    log_info(f"\n{'='*60}")
-    log_info("📊 SEQUENTIAL LOAD SUMMARY")
-    log_info(f"{'='*60}")
-    log_success(f"Total pages attempted: 100")
-    log_success(f"Pages with actual anime: {successful_pages}")
-    log_success(f"Total anime loaded: {len(filtered_anime)}")
-    log_performance(f"Load duration: {load_duration:.2f} seconds")
-    log_info(f"{'='*60}")
-    
-    return filtered_anime, successful_pages, load_duration
 
 def load_all_anime():
-    """Load semua anime dari API - GUARANTEED 100 PAGE LOAD"""
-    global anime_cache, cache_loaded, cache_loading, cache_metadata
+    """Load semua anime dari API dan simpan di cache"""
+    global anime_cache, cache_loaded, cache_loading
     
     if cache_loading:
-        log_info("Cache loading in progress, returning existing...")
         return anime_cache
     
     if cache_loaded and len(anime_cache) > 0:
-        log_info(f"Using existing cache: {len(anime_cache)} anime")
         return anime_cache
     
     cache_loading = True
-    log_info("=" * 70)
-    log_info("🔥🔥🔥 GUARANTEED 100 PAGE LOAD INITIATED 🔥🔥🔥")
-    log_info("=" * 70)
+    log_info("Loading anime cache...")
     
-    load_start = datetime.now()
+    all_anime = []
     
-    # Try parallel loading first (faster)
-    try:
-        log_info("Attempting parallel loading...")
-        all_anime, successful_pages, load_duration = load_100_pages_parallel()
-        
-        # If parallel loading got less than 80 pages, try sequential
-        if successful_pages < 80:
-            log_warning(f"Parallel loading only got {successful_pages} pages, switching to sequential...")
-            all_anime, successful_pages, load_duration = load_100_pages_sequential()
-    except Exception as e:
-        log_error(f"Parallel loading failed: {e}, switching to sequential...")
-        all_anime, successful_pages, load_duration = load_100_pages_sequential()
+    # Hanya load dari endpoint yang tersedia
+    endpoints_to_try = ['latest']
     
-    # Remove duplicates dengan smart deduplication
-    log_info("\n🧹 Removing duplicates...")
+    for endpoint_name in endpoints_to_try:
+        for page in range(1, CACHE_MAX_PAGES + 1):
+            try:
+                url = f"{API_BASE}/anime/{endpoint_name}?page={page}"
+                response = safe_api_request(url)
+                
+                if response:
+                    data = response.json()
+                    if isinstance(data, list) and len(data) > 0:
+                        all_anime.extend(data)
+                    else:
+                        break
+                
+                time.sleep(REQUEST_DELAY)
+                    
+            except Exception:
+                break
     
-    seen_urls = set()
-    seen_titles = set()
+    # Remove duplicates
+    seen_identifiers = set()
     unique_anime = []
     
     for anime in all_anime:
-        # Skip placeholder entries
-        if anime.get('__empty', False):
-            continue
-            
-        anime_url = anime.get('url', '').strip().lower()
-        anime_title = anime.get('judul', '').strip().lower()
-        anime_id = str(anime.get('id', ''))
+        url = anime.get('url', '')
+        anime_id = anime.get('id', '')
+        identifier = f"{url}|{anime_id}"
         
-        # Create multiple identifiers for better deduplication
-        identifiers = [
-            f"url:{anime_url}",
-            f"title:{anime_title}",
-            f"id:{anime_id}",
-            f"url_id:{anime_url}|{anime_id}",
-            f"title_id:{anime_title}|{anime_id}"
-        ]
-        
-        is_duplicate = False
-        for identifier in identifiers:
-            if identifier in seen_urls:
-                is_duplicate = True
-                break
-        
-        if not is_duplicate:
-            for identifier in identifiers:
-                seen_urls.add(identifier)
-            seen_titles.add(anime_title)
+        if identifier and identifier not in seen_identifiers:
+            seen_identifiers.add(identifier)
             unique_anime.append(anime)
-    
-    # Sort by page number untuk maintain order
-    unique_anime.sort(key=lambda x: x.get('__page', 999))
     
     anime_cache = unique_anime
     cache_loaded = True
     cache_loading = False
     
-    # Update metadata
-    cache_metadata.update({
-        'total_pages_loaded': successful_pages,
-        'total_anime_loaded': len(anime_cache),
-        'last_updated': datetime.now().isoformat(),
-        'load_duration': load_duration,
-        'unique_anime_count': len(unique_anime)
-    })
-    
-    load_end = datetime.now()
-    total_load_time = (load_end - load_start).total_seconds()
-    
-    log_info("=" * 70)
-    log_info("🎉 CACHE LOADING COMPLETE!")
-    log_info("=" * 70)
-    log_success(f"✅ SUCCESSFUL PAGES: {successful_pages}/100")
-    log_success(f"📊 TOTAL UNIQUE ANIME: {len(anime_cache)}")
-    log_success(f"⏰ LOAD DURATION: {total_load_time:.2f} seconds")
-    log_success(f"📈 ANIME PER PAGE: {len(anime_cache)/max(successful_pages, 1):.1f}")
-    log_info(f"🕒 CACHE TIMESTAMP: {cache_metadata['last_updated']}")
-    log_info("=" * 70)
-    
-    # Log performance statistics
-    log_performance(f"\n📈 PERFORMANCE STATISTICS:")
-    log_performance(f"   Total API Calls: {total_api_calls}")
-    log_performance(f"   Failed API Calls: {failed_api_calls}")
-    log_performance(f"   Success Rate: {(total_api_calls - failed_api_calls)/total_api_calls*100:.1f}%")
-    log_performance(f"   Avg Time per Page: {load_duration/100:.2f}s")
-    
+    log_success(f"Cache loaded: {len(anime_cache)} anime")
     return anime_cache
 
 def find_anime_by_slug(slug):
@@ -401,36 +143,17 @@ def find_anime_by_slug(slug):
     
     slug_normalized = slug.strip('/').lower()
     
-    # Multiple matching strategies
-    matching_strategies = [
-        # Strategy 1: Exact URL match
-        lambda anime: anime.get('url', '').strip('/').lower() == slug_normalized,
-        
-        # Strategy 2: URL contains slug
-        lambda anime: slug_normalized in anime.get('url', '').strip('/').lower(),
-        
-        # Strategy 3: Slug contains URL
-        lambda anime: anime.get('url', '').strip('/').lower() in slug_normalized,
-        
-        # Strategy 4: Title match
-        lambda anime: slug_normalized in anime.get('judul', '').lower().replace(' ', '-').replace(':', ''),
-        
-        # Strategy 5: Partial title match
-        lambda anime: any(part in anime.get('judul', '').lower() 
-                         for part in slug_normalized.split('-') if len(part) > 2),
-        
-        # Strategy 6: ID match
-        lambda anime: str(anime.get('id', '')) == slug_normalized,
-        
-        # Strategy 7: Fuzzy match on URL parts
-        lambda anime: any(part in anime.get('url', '').lower() 
-                         for part in slug_normalized.split('-') if len(part) > 3),
-    ]
+    # Try 1: Exact URL match
+    for anime in all_anime:
+        anime_url = anime.get('url', '').strip('/').lower()
+        if anime_url == slug_normalized:
+            return anime
     
-    for strategy in matching_strategies:
-        for anime in all_anime:
-            if strategy(anime):
-                return anime
+    # Try 2: Partial URL match
+    for anime in all_anime:
+        anime_url = anime.get('url', '').strip('/').lower()
+        if slug_normalized in anime_url or anime_url in slug_normalized:
+            return anime
     
     return None
 
@@ -439,7 +162,6 @@ def get_episode_video(anime_data, episode_num):
     try:
         anime_id = anime_data.get('id', '')
         anime_url = anime_data.get('url', '').rstrip('/')
-        anime_slug = anime_url.split('/')[-1] if '/' in anime_url else anime_url
         
         # Coba berbagai format chapterUrlId
         possible_chapter_ids = [
@@ -448,19 +170,11 @@ def get_episode_video(anime_data, episode_num):
             f"al-{anime_id}-{str(episode_num).zfill(3)}",
             f"{anime_url}-episode-{episode_num}",
             f"{anime_url}-ep-{episode_num}",
-            f"{anime_slug}-episode-{episode_num}",
-            f"{anime_slug}-ep-{episode_num}",
-            f"episode-{episode_num}-{anime_id}",
-            f"ep-{episode_num}-{anime_id}",
         ]
-        
-        log_info(f"Trying to get video for episode {episode_num}, anime ID: {anime_id}")
         
         for chapter_id in possible_chapter_ids:
             try:
                 video_url = f"{API_BASE}/anime/getvideo?chapterUrlId={quote(chapter_id)}"
-                log_info(f"  Trying chapter ID: {chapter_id}")
-                
                 response = safe_api_request(video_url)
                 if response:
                     data = response.json()
@@ -469,20 +183,15 @@ def get_episode_video(anime_data, episode_num):
                         if 'error' in data:
                             continue
                         if 'data' in data and data['data']:
-                            log_success(f"  Found video with chapter ID: {chapter_id}")
                             return data
                         elif 'stream' in data:
-                            log_success(f"  Found video stream with chapter ID: {chapter_id}")
                             return data
-            except Exception as e:
-                log_warning(f"  Failed with chapter ID {chapter_id}: {str(e)[:50]}")
+            except:
                 continue
         
-        log_error(f"  No video found for episode {episode_num}")
         return None
             
-    except Exception as e:
-        log_error(f"Error getting episode video: {e}")
+    except Exception:
         return None
 
 def check_next_page(endpoint, page, genre_name=None):
@@ -537,8 +246,7 @@ def home():
                              has_prev_page=has_prev_page,
                              max_pages=MAX_PAGES,
                              endpoint_name='Latest Anime')
-    except Exception as e:
-        log_error(f"Error in home route: {e}")
+    except Exception:
         return render_template('home.html', 
                              data=[], 
                              current_page=page,
@@ -564,8 +272,7 @@ def ongoing():
                              has_prev_page=has_prev_page,
                              max_pages=MAX_PAGES,
                              endpoint_name='Ongoing Anime')
-    except Exception as e:
-        log_error(f"Error in ongoing route: {e}")
+    except Exception:
         return render_template('ongoing.html', 
                              data=[], 
                              current_page=page,
@@ -591,8 +298,7 @@ def completed():
                              has_prev_page=has_prev_page,
                              max_pages=MAX_PAGES,
                              endpoint_name='Completed Anime')
-    except Exception as e:
-        log_error(f"Error in completed route: {e}")
+    except Exception:
         return render_template('completed.html', 
                              data=[], 
                              current_page=page,
@@ -618,8 +324,7 @@ def movie():
                              has_prev_page=has_prev_page,
                              max_pages=MAX_PAGES,
                              endpoint_name='Movie Anime')
-    except Exception as e:
-        log_error(f"Error in movie route: {e}")
+    except Exception:
         return render_template('movie.html', 
                              data=[], 
                              current_page=page,
@@ -681,8 +386,7 @@ def search():
                              max_pages=MAX_PAGES,
                              total_results=len(results))
         
-    except Exception as e:
-        log_error(f"Error in search route: {e}")
+    except Exception:
         return render_template('search.html', 
                              query=query, 
                              data=[],
@@ -714,8 +418,7 @@ def anime_detail(slug):
                              error_message=f"Anime '{slug}' tidak ditemukan",
                              suggestion="Coba cari anime di halaman search")
         
-    except Exception as e:
-        log_error(f"Error in anime_detail route: {e}")
+    except Exception:
         return render_template('error.html', 
                              error_message="Terjadi kesalahan saat memuat anime",
                              suggestion="Coba lagi nanti atau gunakan fitur search")
@@ -759,8 +462,7 @@ def watch(slug):
         
         return render_template('watch.html', episode=episode_data)
         
-    except Exception as e:
-        log_error(f"Error in watch route: {e}")
+    except Exception:
         return render_template('error.html',
                              error_message="Terjadi kesalahan saat memuat video",
                              suggestion="Coba lagi nanti atau pilih episode lain")
@@ -787,8 +489,7 @@ def genre(genre_name):
                              has_next_page=has_next_page,
                              has_prev_page=has_prev_page,
                              max_pages=MAX_PAGES)
-    except Exception as e:
-        log_error(f"Error in genre route: {e}")
+    except Exception:
         return render_template('genre.html', 
                              data=[], 
                              genre_name=genre_name, 
@@ -798,7 +499,7 @@ def genre(genre_name):
 @app.route('/cache/reload')
 def reload_cache():
     """Reload anime cache"""
-    global anime_cache, cache_loaded, cache_metadata
+    global anime_cache, cache_loaded
     anime_cache = []
     cache_loaded = False
     
@@ -823,35 +524,13 @@ def cache_info():
     
     return jsonify({
         'status': 'success',
-        'cache_metadata': cache_metadata,
-        'performance': {
-            'total_api_calls': total_api_calls,
-            'failed_api_calls': failed_api_calls,
-            'success_rate': f"{(total_api_calls - failed_api_calls)/max(total_api_calls, 1)*100:.1f}%",
-            'server_uptime': str(datetime.now() - startup_time)
-        },
-        'configuration': {
+        'cache_info': {
+            'total_anime': len(anime_cache),
+            'cache_loaded': cache_loaded,
             'max_pages': MAX_PAGES,
             'cache_max_pages': CACHE_MAX_PAGES,
             'api_base': API_BASE,
-            'max_retries': MAX_RETRIES,
-            'retry_delay': RETRY_DELAY,
-            'request_delay': REQUEST_DELAY
-        },
-        'sample_data': {
-            'sample_count': min(10, len(anime_cache)),
-            'samples': [
-                {
-                    'id': anime.get('id'),
-                    'title': anime.get('judul'),
-                    'url': anime.get('url'),
-                    'type': anime.get('type'),
-                    'episodes': anime.get('total_episode'),
-                    'page': anime.get('__page'),
-                    'endpoint': anime.get('__endpoint')
-                }
-                for anime in anime_cache[:10]
-            ] if anime_cache else []
+            'last_updated': datetime.now().isoformat()
         }
     })
 
@@ -864,9 +543,7 @@ def health_check():
         'timestamp': datetime.now().isoformat(),
         'cache_status': 'loaded' if cache_loaded else 'loading',
         'cache_size': len(anime_cache),
-        'max_pages_supported': MAX_PAGES,
-        'pages_actually_loaded': cache_metadata.get('total_pages_loaded', 0),
-        'server_uptime': str(datetime.now() - startup_time)
+        'max_pages_supported': MAX_PAGES
     })
 
 @app.route('/stats')
@@ -879,11 +556,9 @@ def stats():
             'max_pages': MAX_PAGES,
             'cache_size': len(anime_cache),
             'cache_loaded': cache_loaded,
-            'pages_loaded': cache_metadata.get('total_pages_loaded', 0),
             'cache_max_pages': CACHE_MAX_PAGES,
             'api_base': API_BASE,
-            'server_time': datetime.now().isoformat(),
-            'server_uptime': str(datetime.now() - startup_time)
+            'server_time': datetime.now().isoformat()
         },
         'endpoints': {
             'home': '/',
@@ -895,8 +570,7 @@ def stats():
             'watch': '/watch/slug/episode-N',
             'genre': '/genre/genre-name',
             'cache_info': '/cache/info',
-            'health': '/health',
-            'stats': '/stats'
+            'health': '/health'
         }
     }
     
@@ -917,15 +591,14 @@ def internal_server_error(e):
 # ==================== STARTUP CACHE LOADING ====================
 
 def load_startup_cache():
-    """Load cache saat aplikasi dimulai - GUARANTEED 100 PAGES"""
-    log_info("🔥 INITIALIZING GUARANTEED 100 PAGE CACHE LOAD...")
+    """Load cache saat aplikasi dimulai"""
+    log_info("Starting background cache loading at startup...")
     def load_cache_background():
-        log_info("🔄 Loading 100 pages of anime in background...")
+        log_info("Loading anime cache in background...")
         load_all_anime()
     
     thread = threading.Thread(target=load_cache_background, daemon=True)
     thread.start()
-    log_info("✅ Background cache loading initiated")
 
 # Panggil fungsi load cache saat startup
 load_startup_cache()
@@ -936,18 +609,15 @@ if __name__ == '__main__':
     # Dapatkan port dari environment variable (Railway menyediakan PORT)
     port = int(os.environ.get('PORT', 5000))
     
-    print("\n" + "=" * 70)
-    print("🚀 ANIME STREAMING SERVER - GUARANTEED 100 PAGE SUPPORT")
-    print("=" * 70)
+    print("=" * 60)
+    print("🚀 ANIME STREAMING SERVER - 100 PAGE SUPPORT")
+    print("=" * 60)
     print(f"📊 Max Pages: {MAX_PAGES}")
     print(f"📦 Cache Max Pages: {CACHE_MAX_PAGES}")
     print(f"🌐 API Base: {API_BASE}")
-    print(f"🔄 Max Retries: {MAX_RETRIES}")
-    print(f"⏱️  Retry Delay: {RETRY_DELAY}s")
-    print(f"⚡ Request Delay: {REQUEST_DELAY}s")
     print(f"🔧 Debug Mode: {app.debug}")
     print(f"📡 Port: {port}")
-    print("=" * 70)
+    print("=" * 60)
     print("📋 Available Routes:")
     print("   Home:        http://localhost:5000")
     print("   Ongoing:     http://localhost:5000/ongoing")
@@ -957,13 +627,7 @@ if __name__ == '__main__':
     print("   Health:      http://localhost:5000/health")
     print("   Cache Info:  http://localhost:5000/cache/info")
     print("   Stats:       http://localhost:5000/stats")
-    print("=" * 70)
-    print("🔥 FEATURE: GUARANTEED 100 PAGE LOADING")
-    print("   • Parallel loading for speed")
-    print("   • Aggressive retry mechanism")
-    print("   • Smart deduplication")
-    print("   • Performance tracking")
-    print("=" * 70 + "\n")
+    print("=" * 60)
     
     # Run server
     app.run(
