@@ -1,3 +1,5 @@
+[file name]: app.py
+[file content begin]
 # app.py - Production Ready for Railway dengan 100 Page Support
 import os
 from flask import Flask, render_template, request, jsonify
@@ -16,7 +18,7 @@ API_BASE = os.environ.get('API_BASE', 'https://api.sansekai.my.id/api')
 MAX_PAGES = int(os.environ.get('MAX_PAGES', 100))  # 100 PAGES untuk semua endpoint
 MAX_RETRIES = int(os.environ.get('MAX_RETRIES', 3))
 RETRY_DELAY = float(os.environ.get('RETRY_DELAY', 2.0))
-REQUEST_DELAY = float(os.environ.get('REQUEST_DELAY', 0.3))  # Dikurangi untuk lebih cepat
+REQUEST_DELAY = float(os.environ.get('REQUEST_DELAY', 1.0))  # ⭐ DITINGKATKAN dari 0.3 ke 1.0 DETIK
 CACHE_MAX_PAGES = int(os.environ.get('CACHE_MAX_PAGES', 50))  # Cache 50 pages untuk performance
 
 # Cache untuk menyimpan semua anime
@@ -112,6 +114,7 @@ def load_all_anime():
                     else:
                         break
                 
+                # ⭐ DELAY ANTAR REQUEST: 1.0 DETIK (mengurangi rate limiting)
                 time.sleep(REQUEST_DELAY)
                     
             except Exception:
@@ -636,3 +639,4 @@ if __name__ == '__main__':
         debug=os.environ.get('DEBUG', 'False').lower() == 'true',
         threaded=True
     )
+[file content end]
