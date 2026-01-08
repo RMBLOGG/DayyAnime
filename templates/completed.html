@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+
+{% block title %}Completed Anime - AnimeStream{% endblock %}
+
+{% block content %}
+<h2 class="page-title">✅ Completed Anime</h2>
+
+{% if data %}
+<div class="anime-grid">
+    {% for anime in data %}
+    <a href="/anime/{{ anime.url }}" style="text-decoration: none; color: inherit;">
+        <div class="anime-card">
+            {% if anime.total_episode %}
+            <span class="badge">{{ anime.total_episode }} Eps</span>
+            {% elif anime.lastch %}
+            <span class="badge">{{ anime.lastch }}</span>
+            {% endif %}
+            <img src="{{ anime.cover }}" alt="{{ anime.judul }}" onerror="this.src='https://via.placeholder.com/180x260?text=No+Image'">
+            <div class="anime-card-info">
+                <h3>{{ anime.judul }}</h3>
+                <div class="meta">
+                    <span>⭐ {{ anime.score if anime.score and anime.score != 'N/A' else 'N/A' }}</span>
+                    <span>Completed</span>
+                </div>
+            </div>
+        </div>
+    </a>
+    {% endfor %}
+</div>
+
+<div class="pagination">
+    {% if current_page > 1 %}
+    <a href="/completed?page={{ current_page - 1 }}">← Prev</a>
+    {% else %}
+    <span class="disabled">← Prev</span>
+    {% endif %}
+    
+    <span class="active">Page {{ current_page }}</span>
+    
+    <a href="/completed?page={{ current_page + 1 }}">Next →</a>
+</div>
+{% else %}
+<p style="text-align: center; margin: 3rem 0; font-size: 1.2rem; color: #999;">Tidak ada anime completed tersedia</p>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+
+{% block title %}Latest Anime - AnimeStream{% endblock %}
+
+{% block content %}
+<h2 class="page-title">📺 Latest Anime</h2>
+
+{% if data %}
+<div class="anime-grid">
+    {% for anime in data %}
+    <a href="/anime/{{ anime.url }}" style="text-decoration: none; color: inherit;">
+        <div class="anime-card">
+            {% if anime.lastch %}
+            <span class="badge">{{ anime.lastch }}</span>
+            {% elif anime.lastup %}
+            <span class="badge">{{ anime.lastup }}</span>
+            {% endif %}
+            <img src="{{ anime.cover }}" alt="{{ anime.judul }}" onerror="this.src='https://via.placeholder.com/180x260?text=No+Image'">
+            <div class="anime-card-info">
+                <h3>{{ anime.judul }}</h3>
+                <div class="meta">
+                    <span>⭐ {{ anime.score if anime.score and anime.score != 'N/A' else 'N/A' }}</span>
+                    {% if anime.status %}
+                    <span>{{ anime.status }}</span>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </a>
+    {% endfor %}
+</div>
+
+<!-- Navigasi halaman -->
+<div class="pagination">
+    {% if current_page > 1 %}
+        <a href="/?page={{ current_page-1 }}" class="page-link">← Prev</a>
+    {% endif %}
+    
+    <span class="page-info">Page {{ current_page }}</span>
+    
+    {% if has_next_page and current_page < max_pages %}
+        <a href="/?page={{ current_page+1 }}" class="page-link">Next →</a>
+    {% endif %}
+</div>
+{% else %}
+<p style="text-align: center; margin: 3rem 0; font-size: 1.2rem; color: #999;">Tidak ada anime tersedia</p>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,383 @@
+{% extends "base.html" %}
+
+{% block title %}{{ episode.title if episode.title else episode.judul }} - AnimeStream{% endblock %}
+
+{% block content %}
+<div style="background: linear-gradient(135deg, #0f0f23 0%, #1a1a2e 100%); border-radius: 15px; padding: 2rem; max-width: 1200px; margin: 0 auto;">
+    
+    <!-- Back button -->
+    <div style="margin-bottom: 1.5rem;">
+        <a href="/anime/{{ episode.anime_slug if episode.anime_slug else episode.anime_url }}" 
+           style="display: inline-flex; align-items: center; gap: 0.5rem; color: #ff6b6b; text-decoration: none; font-size: 0.9rem; padding: 0.5rem 1rem; border-radius: 6px; background: rgba(255,107,107,0.1); transition: all 0.2s;" 
+           onmouseover="this.style.background='rgba(255,107,107,0.2)'" 
+           onmouseout="this.style.background='rgba(255,107,107,0.1)'">
+            ← Back to Anime
+        </a>
+    </div>
+    
+    <!-- Episode Title -->
+    <div style="margin-bottom: 1.5rem;">
+        <h1 style="margin: 0; color: #fff; font-size: 1.5rem; font-weight: 600; line-height: 1.4;">
+            {{ episode.title if episode.title else episode.judul }}
+        </h1>
+        <div style="display: flex; align-items: center; gap: 0.8rem; margin-top: 0.5rem; flex-wrap: wrap;">
+            <span style="background: rgba(255,107,107,0.15); color: #ff6b6b; padding: 0.2rem 0.6rem; border-radius: 4px; font-size: 0.8rem; font-weight: 500;">
+                Episode {{ episode.episode }}
+            </span>
+        </div>
+    </div>
+    
+    <!-- Video Player Container - Lebih ringkas -->
+    <div style="background: #000; border-radius: 10px; overflow: hidden; margin-bottom: 1.5rem; position: relative;" id="video-container">
+        <!-- Loading state -->
+        <div style="padding: 3rem 1rem; text-align: center; color: #666;" id="loading-placeholder">
+            <div style="width: 50px; height: 50px; margin: 0 auto 1rem; border: 3px solid rgba(255,107,107,0.3); border-top-color: #ff6b6b; border-radius: 50%; animation: spin 1s linear infinite;"></div>
+            <p style="font-size: 0.9rem; color: #aaa;">Loading video...</p>
+        </div>
+    </div>
+    
+    <!-- Video Info Bar - Sederhana -->
+    <div style="background: rgba(15,15,35,0.7); border-radius: 8px; padding: 0.8rem; margin-bottom: 1.5rem; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 1rem; display: none;" id="video-info-bar">
+        <div style="display: flex; align-items: center; gap: 0.5rem;">
+            <span style="width: 8px; height: 8px; background: #4CAF50; border-radius: 50%;"></span>
+            <span style="color: #ccc; font-size: 0.85rem;">Playing:</span>
+            <span id="playing-quality" style="color: #ff6b6b; font-weight: 500; font-size: 0.85rem;">480p</span>
+        </div>
+        <a href="#" target="_blank" id="new-tab-link" style="color: #6495ed; text-decoration: none; font-size: 0.85rem; padding: 0.3rem 0.6rem; border-radius: 4px; background: rgba(100,149,237,0.1);">
+            Open in new tab
+        </a>
+    </div>
+    
+    <!-- Quality Selector - Sederhana -->
+    <div style="margin-bottom: 1.5rem; display: none; background: rgba(15,15,35,0.8); padding: 1rem; border-radius: 8px;" id="quality-selector">
+        <div style="display: flex; gap: 1rem; align-items: center; flex-wrap: wrap; margin-bottom: 0.8rem;">
+            <div style="flex: 1; min-width: 150px;">
+                <label style="color: #ccc; font-size: 0.85rem; margin-bottom: 0.3rem; display: block;">Quality</label>
+                <select id="quality-select" style="width: 100%; background: #1a1a2e; color: #fff; border: 1px solid rgba(255,107,107,0.3); padding: 0.5rem; border-radius: 5px; font-size: 0.9rem;">
+                    <option value="">Select Quality</option>
+                </select>
+            </div>
+            <div style="flex: 1; min-width: 150px;">
+                <label style="color: #ccc; font-size: 0.85rem; margin-bottom: 0.3rem; display: block;">Provider</label>
+                <select id="provider-select" style="width: 100%; background: #1a1a2e; color: #fff; border: 1px solid rgba(100,149,237,0.3); padding: 0.5rem; border-radius: 5px; font-size: 0.9rem;">
+                    <option value="">Select Provider</option>
+                </select>
+            </div>
+            <button id="apply-selection" style="background: #ff6b6b; color: #fff; padding: 0.5rem 1rem; border-radius: 5px; border: none; cursor: pointer; font-size: 0.9rem; margin-top: 1.2rem;">
+                Apply
+            </button>
+        </div>
+    </div>
+    
+    <!-- Episode Navigation - Minimal -->
+    <div style="display: flex; gap: 1rem; margin-bottom: 1.5rem; justify-content: center;">
+        {% if episode.prev or episode.prev_episode %}
+            {% set prev_url = episode.prev if episode.prev else episode.prev_episode.slug if episode.prev_episode else '' %}
+            {% if prev_url %}
+            <a href="/watch/{{ prev_url }}" 
+               style="flex: 1; background: rgba(15,15,35,0.8); padding: 0.8rem; border-radius: 8px; text-decoration: none; color: #ccc; text-align: center; border: 1px solid rgba(255,107,107,0.2); max-width: 200px;"
+               onmouseover="this.style.borderColor='#ff6b6b'; this.style.color='#fff'"
+               onmouseout="this.style.borderColor='rgba(255,107,107,0.2)'; this.style.color='#ccc'">
+                ← Prev
+            </a>
+            {% endif %}
+        {% endif %}
+        
+        <a href="/anime/{{ episode.anime_slug if episode.anime_slug else episode.anime_url }}" 
+           style="background: rgba(255,107,107,0.9); color: #fff; padding: 0.8rem 1.5rem; border-radius: 8px; text-decoration: none; font-size: 0.9rem;"
+           onmouseover="this.style.background='#ff6b6b'"
+           onmouseout="this.style.background='rgba(255,107,107,0.9)'">
+            All Episodes
+        </a>
+        
+        {% if episode.next or episode.next_episode %}
+            {% set next_url = episode.next if episode.next else episode.next_episode.slug if episode.next_episode else '' %}
+            {% if next_url %}
+            <a href="/watch/{{ next_url }}" 
+               style="flex: 1; background: rgba(15,15,35,0.8); padding: 0.8rem; border-radius: 8px; text-decoration: none; color: #ccc; text-align: center; border: 1px solid rgba(255,107,107,0.2); max-width: 200px;"
+               onmouseover="this.style.borderColor='#ff6b6b'; this.style.color='#fff'"
+               onmouseout="this.style.borderColor='rgba(255,107,107,0.2)'; this.style.color='#ccc'">
+                Next →
+            </a>
+            {% endif %}
+        {% endif %}
+    </div>
+    
+    <!-- Download Links - Hanya muncul jika diperlukan -->
+    <div style="margin-bottom: 1.5rem; display: none;" id="download-container">
+        <div style="color: #ccc; font-size: 0.9rem; margin-bottom: 0.5rem;">Other Qualities:</div>
+        <div style="display: flex; flex-wrap: wrap; gap: 0.5rem;" id="download-links"></div>
+    </div>
+    
+    <!-- Debug Info - Minimal -->
+    <details style="margin-top: 1.5rem;">
+        <summary style="cursor: pointer; color: #888; font-size: 0.8rem;">Debug Info</summary>
+        <pre style="margin-top: 0.5rem; font-size: 0.75rem; color: #666; white-space: pre-wrap; background: rgba(0,0,0,0.2); padding: 0.5rem; border-radius: 4px;" id="debug-info">Loading...</pre>
+    </details>
+
+</div>
+
+<style>
+@keyframes spin {
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
+}
+
+/* Video player aspect ratio */
+#video-container {
+    aspect-ratio: 16/9;
+}
+
+#video-container video {
+    width: 100%;
+    height: 100%;
+    display: block;
+}
+</style>
+
+<script>
+console.log('Watch page loaded');
+
+const animeSlug = "{{ episode.anime_slug if episode.anime_slug else episode.anime_url }}".replace(/\/$/, '');
+const episodeNum = "{{ episode.episode }}";
+const animeId = "{{ episode.anime_id if episode.anime_id else '' }}";
+const backendVideoData = {{ episode.video_data | tojson | safe if episode.video_data else 'null' }};
+const API_BASE = "https://api.sansekai.my.id/api";
+
+function handleVideoError() {
+    const videoInfoBar = document.getElementById('video-info-bar');
+    if (videoInfoBar) {
+        videoInfoBar.innerHTML = '<div style="color: #ff6b6b;">⚠️ Video failed to load</div>';
+    }
+}
+
+function copyLink(link) {
+    navigator.clipboard.writeText(link).then(() => {
+        alert('Link copied!');
+    });
+}
+
+async function fetchVideo() {
+    try {
+        if (backendVideoData && backendVideoData.data && backendVideoData.data.length > 0) {
+            displayVideo(backendVideoData.data[0], 'from-backend');
+            return;
+        }
+        
+        const possibleFormats = [
+            `al-${animeId}-${episodeNum}`,
+            `al-${animeId}-${String(episodeNum).padStart(2, '0')}`,
+            `${animeSlug}-episode-${episodeNum}`,
+            `${animeSlug}-ep-${episodeNum}`,
+            `${animeSlug}-${episodeNum}`,
+            `${animeId}-${episodeNum}`,
+            `al-${animeId}${episodeNum}`,
+        ];
+        
+        let videoData = null;
+        let workingFormat = null;
+        
+        for (const chapterUrlId of possibleFormats) {
+            try {
+                const url = `${API_BASE}/anime/getvideo?chapterUrlId=${encodeURIComponent(chapterUrlId)}`;
+                const response = await fetch(url);
+                
+                if (response.ok) {
+                    const data = await response.json();
+                    
+                    if (data.error) continue;
+                    
+                    if (data.data && data.data.length > 0 && data.data[0].stream && data.data[0].stream.length > 0) {
+                        videoData = data;
+                        workingFormat = chapterUrlId;
+                        break;
+                    }
+                }
+            } catch (error) {
+                console.log('Failed:', chapterUrlId);
+            }
+        }
+        
+        if (videoData && videoData.data && videoData.data.length > 0) {
+            displayVideo(videoData.data[0], workingFormat);
+        } else {
+            showError('Video not available');
+        }
+        
+    } catch (error) {
+        showError('Failed to load video');
+    }
+}
+
+function displayVideo(data, chapterUrlId) {
+    const container = document.getElementById('video-container');
+    const qualitySelector = document.getElementById('quality-selector');
+    const qualitySelect = document.getElementById('quality-select');
+    const downloadContainer = document.getElementById('download-container');
+    const downloadLinks = document.getElementById('download-links');
+    const debugInfo = document.getElementById('debug-info');
+    const videoInfoBar = document.getElementById('video-info-bar');
+    const playingQuality = document.getElementById('playing-quality');
+    const newTabLink = document.getElementById('new-tab-link');
+    
+    // Update debug info
+    debugInfo.textContent = `Anime: ${animeSlug}\nEpisode: ${episodeNum}\nQuality: ${data.reso ? data.reso.join(', ') : 'N/A'}`;
+    
+    if (data.stream && data.stream.length > 0) {
+        let defaultStream = data.stream.find(s => s.reso === '720p') || 
+                           data.stream.find(s => s.reso === '480p') || 
+                           data.stream[0];
+        
+        // Create video player
+        container.innerHTML = `
+            <video id="video-player" 
+                   controls 
+                   autoplay
+                   style="width: 100%; height: 100%; background: #000;"
+                   onerror="handleVideoError()">
+                <source src="${defaultStream.link}" type="video/mp4">
+                Your browser does not support the video tag.
+            </video>
+        `;
+        
+        // Update info bar
+        playingQuality.textContent = `${defaultStream.reso} (Provider ${defaultStream.provide})`;
+        newTabLink.href = defaultStream.link;
+        videoInfoBar.style.display = 'flex';
+        
+        // Setup quality selector
+        if (data.stream.length > 1) {
+            qualitySelect.innerHTML = '<option value="">Select Quality</option>';
+            const providerSelect = document.getElementById('provider-select');
+            providerSelect.innerHTML = '<option value="">Select Provider</option>';
+            
+            const qualityGroups = {};
+            data.stream.forEach((stream, index) => {
+                if (!qualityGroups[stream.reso]) {
+                    qualityGroups[stream.reso] = [];
+                }
+                qualityGroups[stream.reso].push({ ...stream, index });
+            });
+            
+            // Add quality options
+            Object.keys(qualityGroups).forEach(reso => {
+                const option = document.createElement('option');
+                option.value = reso;
+                option.textContent = reso;
+                if (reso === defaultStream.reso) option.selected = true;
+                qualitySelect.appendChild(option);
+            });
+            
+            function updateProviderList() {
+                const selectedQuality = qualitySelect.value;
+                providerSelect.innerHTML = '<option value="">Select Provider</option>';
+                
+                if (selectedQuality && qualityGroups[selectedQuality]) {
+                    qualityGroups[selectedQuality].forEach(stream => {
+                        const option = document.createElement('option');
+                        option.value = stream.index;
+                        option.textContent = `Provider ${stream.provide}`;
+                        providerSelect.appendChild(option);
+                    });
+                    
+                    if (providerSelect.options.length > 1) {
+                        providerSelect.selectedIndex = 1;
+                    }
+                }
+            }
+            
+            qualitySelect.addEventListener('change', updateProviderList);
+            
+            document.getElementById('apply-selection').addEventListener('click', function() {
+                const selectedIndex = parseInt(providerSelect.value);
+                
+                if (isNaN(selectedIndex)) {
+                    alert('Please select quality and provider');
+                    return;
+                }
+                
+                const selectedStream = data.stream[selectedIndex];
+                
+                if (selectedStream) {
+                    const videoPlayer = document.getElementById('video-player');
+                    const currentTime = videoPlayer.currentTime;
+                    
+                    videoPlayer.src = selectedStream.link;
+                    videoPlayer.onloadeddata = function() {
+                        videoPlayer.currentTime = currentTime;
+                        videoPlayer.play();
+                        playingQuality.textContent = `${selectedStream.reso} (Provider ${selectedStream.provide})`;
+                        newTabLink.href = selectedStream.link;
+                    };
+                }
+            });
+            
+            updateProviderList();
+            qualitySelector.style.display = 'block';
+        }
+        
+        // Create download links
+        if (data.stream.length > 1) {
+            downloadContainer.style.display = 'block';
+            downloadLinks.innerHTML = '';
+            
+            data.stream.forEach((stream, index) => {
+                const linkDiv = document.createElement('div');
+                linkDiv.innerHTML = `
+                    <button onclick="playQuality(${index})" 
+                       style="background: rgba(255,107,107,0.1); color: #ff6b6b; padding: 0.3rem 0.6rem; border-radius: 4px; border: 1px solid rgba(255,107,107,0.3); font-size: 0.8rem; cursor: pointer;"
+                       onmouseover="this.style.background='rgba(255,107,107,0.2)'"
+                       onmouseout="this.style.background='rgba(255,107,107,0.1)'">
+                        ${stream.reso}
+                    </button>
+                `;
+                downloadLinks.appendChild(linkDiv);
+            });
+            
+            window.streamData = data.stream;
+        }
+        
+    } else {
+        showError('No stream available');
+    }
+}
+
+function playQuality(index) {
+    const selectedStream = window.streamData[index];
+    if (!selectedStream) return;
+    
+    const qualitySelect = document.getElementById('quality-select');
+    const providerSelect = document.getElementById('provider-select');
+    
+    qualitySelect.value = selectedStream.reso;
+    qualitySelect.dispatchEvent(new Event('change'));
+    
+    setTimeout(() => {
+        providerSelect.value = index;
+        document.getElementById('apply-selection').click();
+    }, 100);
+}
+
+function showError(message) {
+    const container = document.getElementById('video-container');
+    const debugInfo = document.getElementById('debug-info');
+    
+    container.innerHTML = `
+        <div style="padding: 2rem; text-align: center; color: #666;">
+            <div style="color: #ff6b6b; font-size: 2rem; margin-bottom: 1rem;">⚠️</div>
+            <p style="color: #ccc; margin-bottom: 0.5rem;">${message}</p>
+            <p style="font-size: 0.85rem; color: #888;">Try another episode or check back later</p>
+        </div>
+    `;
+    
+    debugInfo.textContent = `Error: ${message}\nAnime: ${animeSlug}\nEpisode: ${episodeNum}`;
+}
+
+// Load video
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', fetchVideo);
+} else {
+    fetchVideo();
+}
+</script>
+{% endblock %}
