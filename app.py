@@ -1,4 +1,4 @@
-# app.py - Production Ready for Railway dengan 100 Page Support
+# app.py - Vercel-Compatible Anime Streaming App
 import os
 from flask import Flask, render_template, request, jsonify
 import requests
@@ -6,23 +6,23 @@ from urllib.parse import quote
 import json
 import time
 from datetime import datetime
-import threading
+from functools import lru_cache
+import hashlib
 
 # Inisialisasi Flask app
 app = Flask(__name__)
 
 # Configuration dari environment variables
 API_BASE = os.environ.get('API_BASE', 'https://api.sansekai.my.id/api')
-MAX_PAGES = int(os.environ.get('MAX_PAGES', 100))  # 100 PAGES untuk semua endpoint
+MAX_PAGES = int(os.environ.get('MAX_PAGES', 100))
 MAX_RETRIES = int(os.environ.get('MAX_RETRIES', 3))
 RETRY_DELAY = float(os.environ.get('RETRY_DELAY', 2.0))
-REQUEST_DELAY = float(os.environ.get('REQUEST_DELAY', 0.3))  # Dikurangi untuk lebih cepat
-CACHE_MAX_PAGES = int(os.environ.get('CACHE_MAX_PAGES', 50))  # Cache 50 pages untuk performance
+REQUEST_DELAY = float(os.environ.get('REQUEST_DELAY', 0.3))
+CACHE_TTL = int(os.environ.get('CACHE_TTL', 300))  # Cache waktu hidup di Vercel (detik)
 
-# Cache untuk menyimpan semua anime
-anime_cache = []
-cache_loaded = False
-cache_loading = False
+# Cache in-memory (sementara untuk Vercel)
+memory_cache = {}
+cache_timestamps = {}
 
 # Helper function untuk logging
 def log_info(message):
@@ -81,26 +81,36 @@ def safe_api_request(url, retry_count=0):
     except Exception:
         return None
 
-def load_all_anime():
-    """Load semua anime dari API dan simpan di cache"""
-    global anime_cache, cache_loaded, cache_loading
+def get_cached_or_fetch(cache_key, fetch_func, ttl=CACHE_TTL):
+    """Dapatkan data dari cache atau fetch baru"""
+    current_time = time.time()
     
-    if cache_loading:
-        return anime_cache
+    # Cek cache
+    if cache_key in memory_cache:
+        cache_time = cache_timestamps.get(cache_key, 0)
+        if current_time - cache_time < ttl:
+            return memory_cache[cache_key]
     
-    if cache_loaded and len(anime_cache) > 0:
-        return anime_cache
+    # Fetch baru
+    data = fetch_func()
     
-    cache_loading = True
-    log_info("Loading anime cache...")
+    # Simpan ke cache
+    if data is not None:
+        memory_cache[cache_key] = data
+        cache_timestamps[cache_key] = current_time
+    
+    return data
+
+@lru_cache(maxsize=100)
+def fetch_all_anime():
+    """Fetch semua anime dari API (dengan LRU cache)"""
+    log_info("Fetching anime data from API...")
     
     all_anime = []
-    
-    # Hanya load dari endpoint yang tersedia
     endpoints_to_try = ['latest']
     
     for endpoint_name in endpoints_to_try:
-        for page in range(1, CACHE_MAX_PAGES + 1):
+        for page in range(1, 6):  # Hanya fetch 5 halaman untuk Vercel
             try:
                 url = f"{API_BASE}/anime/{endpoint_name}?page={page}"
                 response = safe_api_request(url)
@@ -114,7 +124,8 @@ def load_all_anime():
                 
                 time.sleep(REQUEST_DELAY)
                     
-            except Exception:
+            except Exception as e:
+                log_error(f"Error fetching page {page}: {str(e)}")
                 break
     
     # Remove duplicates
@@ -130,32 +141,42 @@ def load_all_anime():
             seen_identifiers.add(identifier)
             unique_anime.append(anime)
     
-    anime_cache = unique_anime
-    cache_loaded = True
-    cache_loading = False
-    
-    log_success(f"Cache loaded: {len(anime_cache)} anime")
-    return anime_cache
+    log_success(f"Fetched {len(unique_anime)} anime")
+    return unique_anime
 
 def find_anime_by_slug(slug):
-    """Cari anime berdasarkan slug atau ID dari cache"""
-    all_anime = load_all_anime()
-    
-    slug_normalized = slug.strip('/').lower()
-    
-    # Try 1: Exact URL match
-    for anime in all_anime:
-        anime_url = anime.get('url', '').strip('/').lower()
-        if anime_url == slug_normalized:
-            return anime
-    
-    # Try 2: Partial URL match
-    for anime in all_anime:
-        anime_url = anime.get('url', '').strip('/').lower()
-        if slug_normalized in anime_url or anime_url in slug_normalized:
-            return anime
-    
-    return None
+    """Cari anime berdasarkan slug atau ID"""
+    try:
+        all_anime = fetch_all_anime()
+        
+        if not all_anime:
+            return None
+        
+        slug_normalized = slug.strip('/').lower()
+        
+        # Try 1: Exact URL match
+        for anime in all_anime:
+            anime_url = anime.get('url', '').strip('/').lower()
+            if anime_url == slug_normalized:
+                return anime
+        
+        # Try 2: Partial URL match
+        for anime in all_anime:
+            anime_url = anime.get('url', '').strip('/').lower()
+            if slug_normalized in anime_url or anime_url in slug_normalized:
+                return anime
+        
+        # Try 3: Match by title/slug parts
+        for anime in all_anime:
+            anime_title = anime.get('judul', '').lower()
+            if slug_normalized in anime_title or any(part in slug_normalized for part in anime_title.split()):
+                return anime
+        
+        return None
+        
+    except Exception as e:
+        log_error(f"Error finding anime: {str(e)}")
+        return None
 
 def get_episode_video(anime_data, episode_num):
     """Coba dapatkan video dengan berbagai cara"""
@@ -191,7 +212,8 @@ def get_episode_video(anime_data, episode_num):
         
         return None
             
-    except Exception:
+    except Exception as e:
+        log_error(f"Error getting video: {str(e)}")
         return None
 
 def check_next_page(endpoint, page, genre_name=None):
@@ -211,21 +233,26 @@ def check_next_page(endpoint, page, genre_name=None):
     return False
 
 def get_anime_data(endpoint, page, genre_name=None):
-    """Get anime data dengan error handling"""
-    try:
-        if genre_name:
-            url = f"{API_BASE}/anime/genre/{genre_name}?page={page}"
-        else:
-            url = f"{API_BASE}/anime/{endpoint}?page={page}"
-        
-        response = safe_api_request(url)
-        if response:
-            data = response.json()
-            if isinstance(data, list):
-                return data
-    except:
-        pass
-    return []
+    """Get anime data dengan error handling dan caching"""
+    cache_key = f"anime_data_{endpoint}_{genre_name}_{page}"
+    
+    def fetch_data():
+        try:
+            if genre_name:
+                url = f"{API_BASE}/anime/genre/{genre_name}?page={page}"
+            else:
+                url = f"{API_BASE}/anime/{endpoint}?page={page}"
+            
+            response = safe_api_request(url)
+            if response:
+                data = response.json()
+                if isinstance(data, list):
+                    return data
+        except Exception as e:
+            log_error(f"Error fetching anime data: {str(e)}")
+        return []
+    
+    return get_cached_or_fetch(cache_key, fetch_data)
 
 # ==================== ROUTES ====================
 
@@ -246,7 +273,8 @@ def home():
                              has_prev_page=has_prev_page,
                              max_pages=MAX_PAGES,
                              endpoint_name='Latest Anime')
-    except Exception:
+    except Exception as e:
+        log_error(f"Home error: {str(e)}")
         return render_template('home.html', 
                              data=[], 
                              current_page=page,
@@ -272,7 +300,8 @@ def ongoing():
                              has_prev_page=has_prev_page,
                              max_pages=MAX_PAGES,
                              endpoint_name='Ongoing Anime')
-    except Exception:
+    except Exception as e:
+        log_error(f"Ongoing error: {str(e)}")
         return render_template('ongoing.html', 
                              data=[], 
                              current_page=page,
@@ -298,7 +327,8 @@ def completed():
                              has_prev_page=has_prev_page,
                              max_pages=MAX_PAGES,
                              endpoint_name='Completed Anime')
-    except Exception:
+    except Exception as e:
+        log_error(f"Completed error: {str(e)}")
         return render_template('completed.html', 
                              data=[], 
                              current_page=page,
@@ -324,7 +354,8 @@ def movie():
                              has_prev_page=has_prev_page,
                              max_pages=MAX_PAGES,
                              endpoint_name='Movie Anime')
-    except Exception:
+    except Exception as e:
+        log_error(f"Movie error: {str(e)}")
         return render_template('movie.html', 
                              data=[], 
                              current_page=page,
@@ -344,37 +375,39 @@ def search():
                              max_pages=MAX_PAGES)
     
     try:
-        url = f"{API_BASE}/anime/search?query={quote(query)}"
-        response = safe_api_request(url)
+        cache_key = f"search_{hashlib.md5(query.encode()).hexdigest()}_{page}"
         
-        if not response:
-            return render_template('search.html', 
-                                 query=query, 
-                                 data=[],
-                                 current_page=page,
-                                 max_pages=MAX_PAGES)
-        
-        data = response.json()
-        results = []
-        
-        if isinstance(data, dict) and 'data' in data:
-            inner_data = data['data']
+        def fetch_search_results():
+            url = f"{API_BASE}/anime/search?query={quote(query)}"
+            response = safe_api_request(url)
             
-            if isinstance(inner_data, list) and len(inner_data) > 0:
-                first_element = inner_data[0]
+            if not response:
+                return []
+            
+            data = response.json()
+            results = []
+            
+            if isinstance(data, dict) and 'data' in data:
+                inner_data = data['data']
                 
-                if isinstance(first_element, dict) and 'result' in first_element:
-                    results = first_element['result'] if isinstance(first_element['result'], list) else []
-                else:
-                    results = inner_data
+                if isinstance(inner_data, list) and len(inner_data) > 0:
+                    first_element = inner_data[0]
+                    
+                    if isinstance(first_element, dict) and 'result' in first_element:
+                        results = first_element['result'] if isinstance(first_element['result'], list) else []
+                    else:
+                        results = inner_data
+            return results
+        
+        results = get_cached_or_fetch(cache_key, fetch_search_results, ttl=60)
         
         # Manual pagination
         items_per_page = 20
         start_idx = (page - 1) * items_per_page
         end_idx = start_idx + items_per_page
-        paginated_results = results[start_idx:end_idx]
+        paginated_results = results[start_idx:end_idx] if results else []
         
-        has_next_page = len(results) > end_idx
+        has_next_page = len(results) > end_idx if results else False
         has_prev_page = page > 1
         
         return render_template('search.html', 
@@ -384,9 +417,10 @@ def search():
                              has_next_page=has_next_page,
                              has_prev_page=has_prev_page,
                              max_pages=MAX_PAGES,
-                             total_results=len(results))
+                             total_results=len(results) if results else 0)
         
-    except Exception:
+    except Exception as e:
+        log_error(f"Search error: {str(e)}")
         return render_template('search.html', 
                              query=query, 
                              data=[],
@@ -401,11 +435,16 @@ def anime_detail(slug):
         if anime_data:
             # Generate episode list
             total_eps = anime_data.get('total_episode', 12)
-            if isinstance(total_eps, int) and total_eps > 0:
+            if isinstance(total_eps, str) and total_eps.isdigit():
+                total_eps = int(total_eps)
+            elif not isinstance(total_eps, int):
+                total_eps = 12
+            
+            if total_eps > 0:
                 anime_data['episode_list'] = [
                     {
                         'episode': i,
-                        'url': f"{slug.rstrip('/')}/episode-{i}/",
+                        'url': f"/watch/{slug.rstrip('/')}/episode-{i}/",
                         'title': f"Episode {i}",
                         'date': ''
                     }
@@ -418,7 +457,8 @@ def anime_detail(slug):
                              error_message=f"Anime '{slug}' tidak ditemukan",
                              suggestion="Coba cari anime di halaman search")
         
-    except Exception:
+    except Exception as e:
+        log_error(f"Detail error: {str(e)}")
         return render_template('error.html', 
                              error_message="Terjadi kesalahan saat memuat anime",
                              suggestion="Coba lagi nanti atau gunakan fitur search")
@@ -447,12 +487,17 @@ def watch(slug):
                                  error_message=f"Anime tidak ditemukan: {anime_slug}",
                                  suggestion="Kembali ke halaman utama")
         
-        # Get video
-        video_data = get_episode_video(anime_data, episode_num)
+        # Get video with cache
+        cache_key = f"video_{anime_slug}_{episode_num}"
+        
+        def fetch_video():
+            return get_episode_video(anime_data, episode_num)
+        
+        video_data = get_cached_or_fetch(cache_key, fetch_video, ttl=1800)  # Cache 30 menit untuk video
         
         episode_data = {
             'title': f"{anime_data.get('judul', 'Unknown')} - Episode {episode_num}",
-            'anime_url': anime_slug,
+            'anime_url': f"/anime/{anime_slug}",
             'anime_title': anime_data.get('judul', 'Unknown'),
             'episode': episode_num,
             'video_data': video_data,
@@ -462,7 +507,8 @@ def watch(slug):
         
         return render_template('watch.html', episode=episode_data)
         
-    except Exception:
+    except Exception as e:
+        log_error(f"Watch error: {str(e)}")
         return render_template('error.html',
                              error_message="Terjadi kesalahan saat memuat video",
                              suggestion="Coba lagi nanti atau pilih episode lain")
@@ -489,92 +535,76 @@ def genre(genre_name):
                              has_next_page=has_next_page,
                              has_prev_page=has_prev_page,
                              max_pages=MAX_PAGES)
-    except Exception:
+    except Exception as e:
+        log_error(f"Genre error: {str(e)}")
         return render_template('genre.html', 
                              data=[], 
                              genre_name=genre_name, 
                              current_page=page,
                              max_pages=MAX_PAGES)
 
-@app.route('/cache/reload')
-def reload_cache():
-    """Reload anime cache"""
-    global anime_cache, cache_loaded
-    anime_cache = []
-    cache_loaded = False
-    
-    # Load di background thread
-    def reload_in_background():
-        load_all_anime()
-    
-    thread = threading.Thread(target=reload_in_background, daemon=True)
-    thread.start()
-    
-    return jsonify({
-        'status': 'success',
-        'message': 'Cache reload started in background',
-        'cache_size_before': len(anime_cache),
-        'timestamp': datetime.now().isoformat()
-    })
-
-@app.route('/cache/info')
-def cache_info():
-    """Show cache info"""
-    load_all_anime()
-    
-    return jsonify({
-        'status': 'success',
-        'cache_info': {
-            'total_anime': len(anime_cache),
-            'cache_loaded': cache_loaded,
-            'max_pages': MAX_PAGES,
-            'cache_max_pages': CACHE_MAX_PAGES,
-            'api_base': API_BASE,
-            'last_updated': datetime.now().isoformat()
-        }
-    })
-
 @app.route('/health')
 def health_check():
-    """Health check endpoint untuk Railway"""
+    """Health check endpoint untuk Vercel"""
     return jsonify({
         'status': 'healthy',
         'service': 'anime-streaming-api',
         'timestamp': datetime.now().isoformat(),
-        'cache_status': 'loaded' if cache_loaded else 'loading',
-        'cache_size': len(anime_cache),
-        'max_pages_supported': MAX_PAGES
+        'cache_size': len(memory_cache),
+        'max_pages_supported': MAX_PAGES,
+        'environment': 'vercel'
     })
 
-@app.route('/stats')
-def stats():
-    """Server statistics"""
-    load_all_anime()
-    
-    stats_data = {
-        'server': {
-            'max_pages': MAX_PAGES,
-            'cache_size': len(anime_cache),
-            'cache_loaded': cache_loaded,
-            'cache_max_pages': CACHE_MAX_PAGES,
-            'api_base': API_BASE,
-            'server_time': datetime.now().isoformat()
+@app.route('/api/status')
+def api_status():
+    """API status endpoint"""
+    return jsonify({
+        'status': 'online',
+        'version': '1.0.0',
+        'api_base': API_BASE,
+        'cache_info': {
+            'memory_cache_entries': len(memory_cache),
+            'cache_ttl': CACHE_TTL
         },
-        'endpoints': {
-            'home': '/',
-            'ongoing': '/ongoing',
-            'completed': '/completed',
-            'movie': '/movie',
-            'search': '/search?q=query',
-            'anime_detail': '/anime/slug',
-            'watch': '/watch/slug/episode-N',
-            'genre': '/genre/genre-name',
-            'cache_info': '/cache/info',
-            'health': '/health'
-        }
-    }
+        'server_time': datetime.now().isoformat()
+    })
+
+@app.route('/api/search')
+def api_search():
+    """API search endpoint"""
+    query = request.args.get('q', '').strip()
+    if not query:
+        return jsonify({'error': 'Query parameter required'}), 400
     
-    return jsonify(stats_data)
+    try:
+        url = f"{API_BASE}/anime/search?query={quote(query)}"
+        response = safe_api_request(url)
+        
+        if not response:
+            return jsonify({'error': 'Failed to fetch data', 'results': []})
+        
+        data = response.json()
+        results = []
+        
+        if isinstance(data, dict) and 'data' in data:
+            inner_data = data['data']
+            
+            if isinstance(inner_data, list) and len(inner_data) > 0:
+                first_element = inner_data[0]
+                
+                if isinstance(first_element, dict) and 'result' in first_element:
+                    results = first_element['result'] if isinstance(first_element['result'], list) else []
+                else:
+                    results = inner_data
+        
+        return jsonify({
+            'query': query,
+            'results': results,
+            'count': len(results)
+        })
+        
+    except Exception as e:
+        return jsonify({'error': str(e), 'results': []}), 500
 
 @app.errorhandler(404)
 def page_not_found(e):
@@ -588,32 +618,22 @@ def internal_server_error(e):
                          error_message="Terjadi kesalahan internal server",
                          suggestion="Coba refresh halaman atau kembali nanti"), 500
 
-# ==================== STARTUP CACHE LOADING ====================
+# ==================== VERCEL HANDLER ====================
 
-def load_startup_cache():
-    """Load cache saat aplikasi dimulai"""
-    log_info("Starting background cache loading at startup...")
-    def load_cache_background():
-        log_info("Loading anime cache in background...")
-        load_all_anime()
-    
-    thread = threading.Thread(target=load_cache_background, daemon=True)
-    thread.start()
-
-# Panggil fungsi load cache saat startup
-load_startup_cache()
+# Handler untuk Vercel serverless
+app = app
 
 # ==================== MAIN EXECUTION ====================
 
 if __name__ == '__main__':
-    # Dapatkan port dari environment variable (Railway menyediakan PORT)
+    # Dapatkan port dari environment variable
     port = int(os.environ.get('PORT', 5000))
     
     print("=" * 60)
-    print("🚀 ANIME STREAMING SERVER - 100 PAGE SUPPORT")
+    print("🚀 ANIME STREAMING SERVER - VERCEL COMPATIBLE")
     print("=" * 60)
     print(f"📊 Max Pages: {MAX_PAGES}")
-    print(f"📦 Cache Max Pages: {CACHE_MAX_PAGES}")
+    print(f"📦 Cache TTL: {CACHE_TTL} seconds")
     print(f"🌐 API Base: {API_BASE}")
     print(f"🔧 Debug Mode: {app.debug}")
     print(f"📡 Port: {port}")
@@ -625,8 +645,8 @@ if __name__ == '__main__':
     print("   Movie:       http://localhost:5000/movie")
     print("   Search:      http://localhost:5000/search?q=query")
     print("   Health:      http://localhost:5000/health")
-    print("   Cache Info:  http://localhost:5000/cache/info")
-    print("   Stats:       http://localhost:5000/stats")
+    print("   API Status:  http://localhost:5000/api/status")
+    print("   API Search:  http://localhost:5000/api/search?q=query")
     print("=" * 60)
     
     # Run server
