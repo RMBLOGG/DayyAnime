@@ -1,0 +1,13 @@
+{
+  "orgId": "your-org-id",
+  "projectId": "your-project-id",
+  "settings": {
+    "framework": null,
+    "devCommand": null,
+    "installCommand": "pip install -r requirements.txt",
+    "buildCommand": null,
+    "outputDirectory": ".",
+    "rootDirectory": null,
+    "nodeVersion": "18.x"
+  }
+}
