@@ -1,4 +1,4 @@
-# app.py - Vercel-Compatible Anime Streaming App
+# app.py - COMPLETE Vercel-Compatible Anime Streaming App
 import os
 from flask import Flask, render_template, request, jsonify
 import requests
@@ -18,30 +18,26 @@ MAX_PAGES = int(os.environ.get('MAX_PAGES', 100))
 MAX_RETRIES = int(os.environ.get('MAX_RETRIES', 3))
 RETRY_DELAY = float(os.environ.get('RETRY_DELAY', 2.0))
 REQUEST_DELAY = float(os.environ.get('REQUEST_DELAY', 0.3))
-CACHE_TTL = int(os.environ.get('CACHE_TTL', 300))  # Cache waktu hidup di Vercel (detik)
+CACHE_TTL = int(os.environ.get('CACHE_TTL', 300))
 
-# Cache in-memory (sementara untuk Vercel)
+# Cache in-memory
 memory_cache = {}
 cache_timestamps = {}
 
 # Helper function untuk logging
 def log_info(message):
-    """Log informasi dengan timestamp"""
     timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     print(f"[{timestamp}] ℹ️  {message}")
 
 def log_warning(message):
-    """Log warning dengan timestamp"""
     timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     print(f"[{timestamp}] ⚠️  {message}")
 
 def log_error(message):
-    """Log error dengan timestamp"""
     timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     print(f"[{timestamp}] ❌ {message}")
 
 def log_success(message):
-    """Log success dengan timestamp"""
     timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     print(f"[{timestamp}] ✅ {message}")
 
@@ -56,7 +52,6 @@ def safe_api_request(url, retry_count=0):
         
         response = requests.get(url, headers=headers, timeout=10)
         
-        # Handle rate limiting (429)
         if response.status_code == 429:
             if retry_count < MAX_RETRIES:
                 wait_time = RETRY_DELAY * (retry_count + 1)
@@ -65,7 +60,6 @@ def safe_api_request(url, retry_count=0):
                 return safe_api_request(url, retry_count + 1)
             return None
         
-        # Handle other status codes
         if response.status_code != 200:
             return None
         
@@ -85,16 +79,13 @@ def get_cached_or_fetch(cache_key, fetch_func, ttl=CACHE_TTL):
     """Dapatkan data dari cache atau fetch baru"""
     current_time = time.time()
     
-    # Cek cache
     if cache_key in memory_cache:
         cache_time = cache_timestamps.get(cache_key, 0)
         if current_time - cache_time < ttl:
             return memory_cache[cache_key]
     
-    # Fetch baru
     data = fetch_func()
     
-    # Simpan ke cache
     if data is not None:
         memory_cache[cache_key] = data
         cache_timestamps[cache_key] = current_time
@@ -103,14 +94,21 @@ def get_cached_or_fetch(cache_key, fetch_func, ttl=CACHE_TTL):
 
 @lru_cache(maxsize=100)
 def fetch_all_anime():
-    """Fetch semua anime dari API (dengan LRU cache)"""
-    log_info("Fetching anime data from API...")
+    """Fetch semua anime dari API - SEMUA ENDPOINT dengan 100 halaman!"""
+    log_info("Fetching anime data from ALL endpoints...")
     
     all_anime = []
-    endpoints_to_try = ['latest']
+    
+    # LOAD DARI SEMUA 4 ENDPOINT!
+    endpoints_to_try = ['latest', 'ongoing', 'completed', 'movie']
     
     for endpoint_name in endpoints_to_try:
-        for page in range(1, 6):  # Hanya fetch 5 halaman untuk Vercel
+        log_info(f"Loading from endpoint: {endpoint_name}")
+        pages_loaded = 0
+        consecutive_empty = 0
+        
+        # Load sampai 100 halaman per endpoint
+        for page in range(1, min(MAX_PAGES + 1, 101)):
             try:
                 url = f"{API_BASE}/anime/{endpoint_name}?page={page}"
                 response = safe_api_request(url)
@@ -119,14 +117,27 @@ def fetch_all_anime():
                     data = response.json()
                     if isinstance(data, list) and len(data) > 0:
                         all_anime.extend(data)
+                        pages_loaded += 1
+                        consecutive_empty = 0
                     else:
+                        consecutive_empty += 1
+                        if consecutive_empty >= 3:
+                            break
+                else:
+                    consecutive_empty += 1
+                    if consecutive_empty >= 3:
                         break
                 
                 time.sleep(REQUEST_DELAY)
                     
             except Exception as e:
-                log_error(f"Error fetching page {page}: {str(e)}")
-                break
+                log_error(f"Error page {page} from {endpoint_name}: {str(e)}")
+                consecutive_empty += 1
+                if consecutive_empty >= 3:
+                    break
+        
+        log_success(f"Loaded {pages_loaded} pages from {endpoint_name}")
+        time.sleep(1)
     
     # Remove duplicates
     seen_identifiers = set()
@@ -137,21 +148,17 @@ def fetch_all_anime():
         anime_id = anime.get('id', '')
         identifier = f"{url}|{anime_id}"
         
-        if identifier and identifier not in seen_identifiers:
+        if identifier and identifier not in seen_identifiers and identifier != '|':
             seen_identifiers.add(identifier)
             unique_anime.append(anime)
     
-    log_success(f"Fetched {len(unique_anime)} anime")
+    log_success(f"Total: {len(all_anime)}, Unique: {len(unique_anime)}")
     return unique_anime
 
 def find_anime_by_slug(slug):
-    """Cari anime berdasarkan slug atau ID"""
+    """Cari anime di cache ATAU via Search API (FALLBACK!)"""
     try:
         all_anime = fetch_all_anime()
-        
-        if not all_anime:
-            return None
-        
         slug_normalized = slug.strip('/').lower()
         
         # Try 1: Exact URL match
@@ -166,11 +173,41 @@ def find_anime_by_slug(slug):
             if slug_normalized in anime_url or anime_url in slug_normalized:
                 return anime
         
-        # Try 3: Match by title/slug parts
+        # Try 3: ID match
         for anime in all_anime:
-            anime_title = anime.get('judul', '').lower()
-            if slug_normalized in anime_title or any(part in slug_normalized for part in anime_title.split()):
+            if str(anime.get('id', '')) == slug_normalized:
                 return anime
+        
+        # Try 4: SEARCH API FALLBACK! (KUNCI SOLUSI!)
+        log_warning(f"Not in cache, trying Search API for: {slug}")
+        
+        search_query = slug.replace('-', ' ').strip()
+        search_url = f"{API_BASE}/anime/search?query={quote(search_query)}"
+        
+        response = safe_api_request(search_url)
+        if response:
+            data = response.json()
+            
+            # Parse search result
+            results = []
+            if isinstance(data, dict) and 'data' in data:
+                inner = data['data']
+                if isinstance(inner, list) and len(inner) > 0:
+                    first = inner[0]
+                    if isinstance(first, dict) and 'result' in first:
+                        results = first['result'] if isinstance(first['result'], list) else []
+            
+            # Find matching anime
+            for result in results:
+                result_url = result.get('url', '').strip('/').lower()
+                result_id = str(result.get('id', ''))
+                
+                if (result_url == slug_normalized or 
+                    slug_normalized in result_url or 
+                    result_url in slug_normalized or
+                    result_id == slug_normalized):
+                    log_success(f"Found via Search API: {result.get('judul')}")
+                    return result
         
         return None
         
@@ -184,7 +221,6 @@ def get_episode_video(anime_data, episode_num):
         anime_id = anime_data.get('id', '')
         anime_url = anime_data.get('url', '').rstrip('/')
         
-        # Coba berbagai format chapterUrlId
         possible_chapter_ids = [
             f"al-{anime_id}-{episode_num}",
             f"al-{anime_id}-{str(episode_num).zfill(2)}",
@@ -448,20 +484,20 @@ def anime_detail(slug):
                         'title': f"Episode {i}",
                         'date': ''
                     }
-                    for i in range(1, min(total_eps + 1, 100))
+                    for i in range(1, min(total_eps + 1, 500))
                 ]
             
             return render_template('detail.html', anime=anime_data)
         
         return render_template('error.html', 
                              error_message=f"Anime '{slug}' tidak ditemukan",
-                             suggestion="Coba cari anime di halaman search")
+                             suggestion="Coba cari anime di halaman search"), 404
         
     except Exception as e:
         log_error(f"Detail error: {str(e)}")
         return render_template('error.html', 
                              error_message="Terjadi kesalahan saat memuat anime",
-                             suggestion="Coba lagi nanti atau gunakan fitur search")
+                             suggestion="Coba lagi nanti atau gunakan fitur search"), 500
 
 @app.route('/watch/<path:slug>')
 def watch(slug):
@@ -478,14 +514,14 @@ def watch(slug):
         else:
             return render_template('error.html',
                                  error_message="Format URL tidak valid",
-                                 suggestion="Gunakan format: /watch/anime-slug/episode-N")
+                                 suggestion="Gunakan format: /watch/anime-slug/episode-N"), 400
         
         anime_data = find_anime_by_slug(anime_slug)
         
         if not anime_data:
             return render_template('error.html',
                                  error_message=f"Anime tidak ditemukan: {anime_slug}",
-                                 suggestion="Kembali ke halaman utama")
+                                 suggestion="Kembali ke halaman utama"), 404
         
         # Get video with cache
         cache_key = f"video_{anime_slug}_{episode_num}"
@@ -493,7 +529,7 @@ def watch(slug):
         def fetch_video():
             return get_episode_video(anime_data, episode_num)
         
-        video_data = get_cached_or_fetch(cache_key, fetch_video, ttl=1800)  # Cache 30 menit untuk video
+        video_data = get_cached_or_fetch(cache_key, fetch_video, ttl=1800)
         
         episode_data = {
             'title': f"{anime_data.get('judul', 'Unknown')} - Episode {episode_num}",
@@ -511,7 +547,7 @@ def watch(slug):
         log_error(f"Watch error: {str(e)}")
         return render_template('error.html',
                              error_message="Terjadi kesalahan saat memuat video",
-                             suggestion="Coba lagi nanti atau pilih episode lain")
+                             suggestion="Coba lagi nanti atau pilih episode lain"), 500
 
 @app.route('/genre/<genre_name>')
 def genre(genre_name):
@@ -560,12 +596,18 @@ def api_status():
     """API status endpoint"""
     return jsonify({
         'status': 'online',
-        'version': '1.0.0',
+        'version': '2.0.0',
         'api_base': API_BASE,
         'cache_info': {
             'memory_cache_entries': len(memory_cache),
             'cache_ttl': CACHE_TTL
         },
+        'features': [
+            'Search API fallback',
+            '100 pages loading',
+            '4 endpoints support',
+            'Smart caching'
+        ],
         'server_time': datetime.now().isoformat()
     })
 
@@ -618,38 +660,35 @@ def internal_server_error(e):
                          error_message="Terjadi kesalahan internal server",
                          suggestion="Coba refresh halaman atau kembali nanti"), 500
 
-# ==================== VERCEL HANDLER ====================
-
 # Handler untuk Vercel serverless
 app = app
 
-# ==================== MAIN EXECUTION ====================
-
+# Main execution
 if __name__ == '__main__':
-    # Dapatkan port dari environment variable
     port = int(os.environ.get('PORT', 5000))
     
-    print("=" * 60)
-    print("🚀 ANIME STREAMING SERVER - VERCEL COMPATIBLE")
-    print("=" * 60)
+    print("=" * 70)
+    print("🚀 ANIME STREAMING SERVER - COMPLETE VERSION")
+    print("=" * 70)
     print(f"📊 Max Pages: {MAX_PAGES}")
     print(f"📦 Cache TTL: {CACHE_TTL} seconds")
     print(f"🌐 API Base: {API_BASE}")
     print(f"🔧 Debug Mode: {app.debug}")
     print(f"📡 Port: {port}")
-    print("=" * 60)
-    print("📋 Available Routes:")
+    print("=" * 70)
+    print("🔥 Features:")
+    print("   ✅ 100 pages from 4 endpoints (~8000 anime)")
+    print("   ✅ Search API fallback for missing anime")
+    print("   ✅ Smart caching system")
+    print("   ✅ Vercel serverless compatible")
+    print("=" * 70)
+    print("📋 Routes:")
     print("   Home:        http://localhost:5000")
-    print("   Ongoing:     http://localhost:5000/ongoing")
-    print("   Completed:   http://localhost:5000/completed")
-    print("   Movie:       http://localhost:5000/movie")
     print("   Search:      http://localhost:5000/search?q=query")
     print("   Health:      http://localhost:5000/health")
     print("   API Status:  http://localhost:5000/api/status")
-    print("   API Search:  http://localhost:5000/api/search?q=query")
-    print("=" * 60)
+    print("=" * 70)
     
-    # Run server
     app.run(
         host='0.0.0.0',
         port=port,
